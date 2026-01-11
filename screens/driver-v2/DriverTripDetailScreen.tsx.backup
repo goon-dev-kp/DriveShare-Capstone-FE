@@ -1,0 +1,2042 @@
+﻿// import React, { useState, useEffect, useMemo, useRef } from 'react'
+// import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform, Linking, Dimensions, Image } from 'react-native'
+// import AsyncStorage from '@react-native-async-storage/async-storage'
+// import { useRouter, useLocalSearchParams } from 'expo-router'
+// import * as Location from 'expo-location'
+// import * as Speech from 'expo-speech'
+// import tripService from '@/services/tripService'
+// // Use Universal VietMap component for web/mobile compatibility
+// import VietMapUniversal from '@/components/map/VietMapUniversal'
+// import NavigationHUD from '@/components/map/NavigationHUD'
+// import { extractRouteWithSteps, nearestCoordIndex, remainingDistanceFrom, haversine, formatMeters, buildAppleMapsLink, buildGoogleMapsLink, lastCoord } from '@/utils/navigation'
+// import { toGeoJSONLineFeature } from '@/utils/polyline'
+// import { getNavSession, saveNavSession, clearNavSession } from '@/utils/navSession'
+// import vietmapService from '@/services/vietmapService'
+// import { smoothSpeed, formatSpeed, calculateArrivalTime } from '@/utils/navigation-metrics'
+
+// const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window')
+
+// // Enhanced types based on API response
+// interface TripDetailAPIResponse {
+//   statusCode: number
+//   message: string
+//   isSuccess: boolean
+//   result: TripDetailData
+// }
+
+// interface TripDetailData {
+//   tripId: string
+//   tripCode: string
+//   status: string
+//   createAt: string
+//   updateAt: string
+//   vehicle: VehicleInfo
+//   owner: OwnerInfo
+//   shippingRoute: ShippingRouteInfo
+//   tripRoute: TripRouteInfo
+//   provider: ProviderInfo
+//   packages: PackageInfo[]
+//   drivers: DriverInfo[]
+//   contacts: ContactInfo[]
+//   driverContracts: DriverContractInfo[]
+//   deliveryRecords: DeliveryRecordInfo[]
+//   compensations: any[]
+//   issues: any[]
+// }
+
+// interface VehicleInfo {
+//   vehicleId: string
+//   plateNumber: string
+//   model: string
+//   vehicleTypeName: string
+//   imageUrls: string[]
+// }
+
+// interface OwnerInfo {
+//   ownerId: string
+//   fullName: string
+//   companyName: string
+//   phoneNumber: string
+// }
+
+// interface ShippingRouteInfo {
+//   startAddress: string
+//   endAddress: string
+//   estimatedDuration: string
+// }
+
+// interface TripRouteInfo {
+//   distanceKm: number
+//   durationMinutes: number
+//   routeData: string
+// }
+
+// interface ProviderInfo {
+//   providerId: string
+//   companyName: string
+//   taxCode: string
+//   averageRating: number
+// }
+
+// interface PackageInfo {
+//   packageId: string
+//   packageCode: string
+//   weight: number
+//   volume: number
+//   imageUrls: string[]
+//   items: ItemInfo[]
+// }
+
+// interface ItemInfo {
+//   itemId: string
+//   itemName: string
+//   description: string
+//   declaredValue: number
+//   images: string[]
+// }
+
+// interface DriverInfo {
+//   driverId: string
+//   fullName: string
+//   type: 'PRIMARY' | 'SECONDARY'
+//   assignmentStatus: string
+//   paymentStatus: string
+// }
+
+// interface ContactInfo {
+//   tripContactId: string
+//   type: 'SENDER' | 'RECEIVER'
+//   fullName: string
+//   phoneNumber: string
+//   note?: string
+// }
+
+// interface DriverContractInfo {
+//   contractId: string
+//   contractCode: string
+//   status: string
+//   type: string
+//   contractValue: number
+//   currency: string
+//   effectiveDate?: string
+//   expirationDate?: string
+//   fileURL?: string
+//   terms: ContractTermInfo[]
+//   ownerSigned: boolean
+//   ownerSignAt?: string
+//   counterpartySigned: boolean
+//   counterpartySignAt?: string
+// }
+
+// interface ContractTermInfo {
+//   contractTermId: string
+//   content: string
+//   order: number
+//   contractTemplateId: string
+// }
+
+// interface DeliveryRecordInfo {
+//   tripDeliveryRecordId: string
+//   recordType: 'PICKUP' | 'DROPOFF'
+//   note: string
+//   createAt: string
+//   terms: DeliveryTermInfo[]
+// }
+
+// interface DeliveryTermInfo {
+//   deliveryRecordTermId: string
+//   content: string
+//   displayOrder: number
+// }
+
+// type JourneyPhase = 'TO_PICKUP' | 'TO_DELIVERY' | 'COMPLETED'
+
+// type Position = [number, number]
+
+// const StatusPill = ({ value }: { value: string }) => {
+//   const color = useMemo(() => {
+//     const map: Record<string, string> = {
+//       CREATED: '#2563EB',
+//       PENDING: '#D97706',
+//       SIGNED: '#059669',
+//       COMPLETED: '#10B981',
+//       CANCELLED: '#DC2626',
+//       READY_FOR_VEHICLE_HANDOVER: '#0EA5E9'
+//     }
+//     return map[value] || '#6B7280'
+//   }, [value])
+//   return (
+//     <View style={[styles.pill, { backgroundColor: color + '22', borderColor: color }]}>
+//       <Text style={[styles.pillText, { color }]}>{value}</Text>
+//     </View>
+//   )
+// }
+
+// const DriverTripDetailScreenV2: React.FC = () => {
+//   const router = useRouter()
+//   const params = useLocalSearchParams() as { tripId?: string }
+//   const tripId = params.tripId
+  
+//   // State management
+//   const [loading, setLoading] = useState(true)
+//   const [trip, setTrip] = useState<TripDetailData | null>(null)
+//   const [error, setError] = useState<string | null>(null)
+//   const [navActive, setNavActive] = useState(false)
+//   const [navMinimized, setNavMinimized] = useState(false)
+//   const [navHidden, setNavHidden] = useState(false)
+//   const [navOverview, setNavOverview] = useState(false)
+//   const [startModalOpen, setStartModalOpen] = useState(false)
+//   const [startingNav, setStartingNav] = useState(false)
+//   // Delivery record modal state
+//   const [deliveryModalOpen, setDeliveryModalOpen] = useState(false)
+//   const [activeDeliveryRecord, setActiveDeliveryRecord] = useState<any | null>(null)
+//   const [loadingDeliveryRecord, setLoadingDeliveryRecord] = useState(false)
+//   const [signatureInProgress, setSignatureInProgress] = useState(false)
+//   const [pickupMarked, setPickupMarked] = useState(false)
+//   const [toastMsg, setToastMsg] = useState<string | null>(null)
+
+//   const PICKUP_MARK_KEY = (id?: string) => `trip:${id}:pickupMarked`
+
+//   const markPickup = async (val: boolean) => {
+//     try {
+//       setPickupMarked(val)
+//       if (tripId) {
+//         await AsyncStorage.setItem(PICKUP_MARK_KEY(tripId), val ? '1' : '0')
+//       }
+//     } catch (e) {
+//       console.warn('persist pickupMarked failed', e)
+//     }
+//   }
+
+//   const loadPickupMarked = async () => {
+//     try {
+//       if (!tripId) return
+//       const v = await AsyncStorage.getItem(PICKUP_MARK_KEY(tripId))
+//       setPickupMarked(!!v && v === '1')
+//     } catch (e) {
+//       console.warn('load pickupMarked failed', e)
+//     }
+//   }
+  
+//   // Navigation states
+//   const [routeCoords, setRouteCoords] = useState<[number, number][]>([])
+//   const [startPoint, setStartPoint] = useState<[number, number] | undefined>()
+//   const [endPoint, setEndPoint] = useState<[number, number] | undefined>()
+//   const [routeInstructions, setRouteInstructions] = useState<any[]>([])
+//   const [journeyPhase, setJourneyPhase] = useState<JourneyPhase>('TO_PICKUP')
+//   const [canConfirmPickup, setCanConfirmPickup] = useState(false)
+//   const [canConfirmDelivery, setCanConfirmDelivery] = useState(false)
+//   const [currentPos, setCurrentPos] = useState<Position | null>(null)
+//   const [currentHeading, setCurrentHeading] = useState<number | null>(null)
+//   const [nearestIdx, setNearestIdx] = useState<number>(0)
+//   const [remaining, setRemaining] = useState<number>(0)
+//   const [currentSpeed, setCurrentSpeed] = useState<number>(0)
+//   const [eta, setEta] = useState<string>('--:--')
+  
+//   // Refs
+//   const watchSubRef = useRef<any | null>(null)
+//   const previousSpeedRef = useRef<number>(0)
+
+//   // Load trip data
+//   useEffect(() => {
+//     if (!tripId) { 
+//       setError('Trip không hợp lệ')
+//       setLoading(false)
+//       return 
+//     }
+    
+//     ;(async () => {
+//       try {
+//         const res = await tripService.getById(tripId) as TripDetailAPIResponse
+        
+//         if (!res?.isSuccess || res?.statusCode !== 200) {
+//           throw new Error(res?.message || 'Không thể tải chi tiết chuyến')
+//         }
+        
+//         const tripData = res.result
+//         setTrip(tripData)
+        
+//         // Extract route from tripRoute.routeData if available
+//         if (tripData?.tripRoute?.routeData) {
+//           const { coords } = extractRouteWithSteps(tripData.tripRoute.routeData)
+//           setRouteCoords(coords as [number, number][])
+          
+//           if (coords.length > 0) {
+//             setStartPoint(coords[0] as [number, number])
+//             setEndPoint(coords[coords.length - 1] as [number, number])
+//           }
+//         }
+//       } catch (e: any) {
+//         setError(e?.message || 'Lỗi không xác định')
+//       } finally {
+//         setLoading(false)
+//       }
+//     })()
+//   }, [tripId])
+
+//   // Load persisted pickup mark on mount / when tripId changes
+//   useEffect(() => {
+//     loadPickupMarked()
+//   }, [tripId])
+
+//   // Navigation functions
+//   const startNavigation = async () => {
+//     if (startingNav || !trip) return
+//     setStartingNav(true)
+
+//     try {
+//       // Request location permission
+//       const { status } = await Location.requestForegroundPermissionsAsync()
+//       if (status !== 'granted') {
+//         throw new Error('Cần quyền truy cập vị trí để bắt đầu dẫn đường. Vui lòng vào Cài đặt > Quyền riêng tư để cấp quyền.')
+//       }
+
+//       // Get current location
+//       const now = await Location.getCurrentPositionAsync({ 
+//         accuracy: Location.Accuracy.Balanced
+//       })
+//       const currentPosition: Position = [now.coords.longitude, now.coords.latitude]
+//       setCurrentPos(currentPosition)
+
+//       // Plan route current -> pickup using VietMap
+//       if (routeCoords.length > 0) {
+//         const pickupPoint = routeCoords[0] as [number, number]
+//         try {
+//           const planned = await vietmapService.planBetweenPoints(currentPosition as [number, number], pickupPoint, 'car')
+//           try { console.debug('startNavigation planned', { coordsLen: planned.coordinates?.length ?? 0, instrCount: planned.instructions?.length ?? 0 }) } catch {}
+//           if (planned.coordinates?.length) {
+//             setRouteCoords(planned.coordinates as [number, number][])
+//             if (planned.instructions) setRouteInstructions(planned.instructions)
+//             // Ensure endpoints tracked
+//             setStartPoint(planned.coordinates[0] as [number, number])
+//             setEndPoint(planned.coordinates[planned.coordinates.length - 1] as [number, number])
+//           }
+//         } catch (routeError) {
+//           console.warn('VietMap planning failed, using fallback:', routeError)
+//         }
+//       }
+
+//       // Activate navigation
+//       setNavActive(true)
+//       // DEV / TEST: force-enable pickup confirmation so testers can proceed without proximity
+//       setCanConfirmPickup(true)
+//       setJourneyPhase('TO_PICKUP')
+//       setStartModalOpen(false)
+
+//       // Start location watcher to update progress/ETA
+//       try {
+//         if (watchSubRef.current) {
+//           try { watchSubRef.current.remove() } catch {}
+//           watchSubRef.current = null
+//         }
+
+//         watchSubRef.current = await Location.watchPositionAsync(
+//           { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 5, timeInterval: 1000 },
+//           (loc: any) => {
+//             const pos: Position = [loc.coords.longitude, loc.coords.latitude]
+//             setCurrentPos(pos)
+//             if (typeof loc.coords.heading === 'number' && !Number.isNaN(loc.coords.heading)) {
+//               setCurrentHeading(loc.coords.heading)
+//             }
+//                 // no-op; externalLocation prop will update map when currentPos changes
+                
+//             if (routeCoords && routeCoords.length) {
+//               try {
+//                 const nearest = nearestCoordIndex(pos, routeCoords)
+//                 // nearest is expected to be { index, distance }
+//                 const idx = (nearest && (nearest.index ?? nearest)) as number
+//                 setNearestIdx(idx)
+//                 const rem = remainingDistanceFrom(idx, routeCoords, pos)
+//                 setRemaining(rem)
+//                 setEta(calculateArrivalTime(rem))
+//                 const speed = loc.coords.speed ?? previousSpeedRef.current ?? 0
+//                 const smooth = smoothSpeed(speed, previousSpeedRef.current ?? 0)
+//                 previousSpeedRef.current = speed
+//                 setCurrentSpeed(smooth)
+
+//                 // enable confirm pickup/delivery when within ~50m (0.05 km)
+//                 const pickup = routeCoords[0]
+//                 const delivery = routeCoords[routeCoords.length - 1]
+//                 const dToPickup = haversine(pos, pickup)
+//                 const dToDelivery = haversine(pos, delivery)
+//                 if (journeyPhase === 'TO_PICKUP' && dToPickup <= 50) setCanConfirmPickup(true)
+//                 if (journeyPhase === 'TO_DELIVERY' && dToDelivery <= 50) setCanConfirmDelivery(true)
+//               } catch (e) {
+//                 // ignore
+//               }
+//             }
+//           }
+//         )
+//       } catch (watchErr) {
+//         console.warn('Failed to start location watcher:', watchErr)
+//       }
+
+//       // Save navigation session
+//       if (tripId) {
+//         try {
+//           await saveNavSession(`trip:${tripId}`, {
+//             startedAt: Date.now(),
+//             routeSummary: { points: routeCoords.length }
+//           })
+//         } catch (sessionError) {
+//           console.warn('Failed to save nav session:', sessionError)
+//         }
+//       }
+
+//       // Voice announcement
+//       try {
+//         Speech.speak('Bắt đầu dẫn đường đến điểm lấy hàng', { language: 'vi-VN' })
+//       } catch (e) {
+//         console.log('Text-to-speech not available:', e)
+//       }
+
+//       Alert.alert(
+//         '✅ Dẫn đường đã bắt đầu',
+//         `Tuyến đường đã được tính toán. Hãy làm theo hướng dẫn để đến điểm lấy hàng.`,
+//         [{ text: 'OK', style: 'default' }]
+//       )
+
+//     } catch (error) {
+//       console.error('Error starting navigation:', error)
+//       const message = error instanceof Error ? error.message : 'Không thể bắt đầu dẫn đường. Vui lòng kiểm tra kết nối và thử lại.'
+//       Alert.alert('❌ Lỗi bắt đầu dẫn đường', message)
+//     } finally {
+//       setStartingNav(false)
+//     }
+//   }
+
+//   // Helper: start location watcher and basic nav state for delivery
+//   const beginDeliveryNavigation = async () => {
+//     try {
+//       // request permission if needed
+//       const { status } = await Location.requestForegroundPermissionsAsync()
+//       if (status !== 'granted') {
+//         Alert.alert('Cần quyền vị trí', 'Cần quyền vị trí để bắt đầu dẫn đường đến điểm giao hàng.')
+//         return
+//       }
+
+//       // ensure we have a delivery route; if not, attempt to plan from currentPos
+//       const deliveryPoint = routeCoords && routeCoords.length ? routeCoords[routeCoords.length - 1] : endPoint
+//       const from = currentPos || (routeCoords && routeCoords.length ? routeCoords[0] : startPoint)
+//       if ((!routeCoords || routeCoords.length === 0) && from && deliveryPoint) {
+//         try {
+//           const planned = await vietmapService.planBetweenPoints(from as [number, number], deliveryPoint as [number, number], 'car')
+//           if (planned?.coordinates?.length) {
+//             setRouteCoords(planned.coordinates as [number, number][])
+//             if (planned.instructions) setRouteInstructions(planned.instructions)
+//             setStartPoint(planned.coordinates[0] as [number, number])
+//             setEndPoint(planned.coordinates[planned.coordinates.length - 1] as [number, number])
+//           }
+//         } catch (e) {
+//           console.warn('Failed to plan delivery route in beginDeliveryNavigation', e)
+//         }
+//       }
+
+//       // start watcher (reuse same behavior as startNavigation)
+//       try {
+//         if (watchSubRef.current) {
+//           try { watchSubRef.current.remove() } catch {}
+//           watchSubRef.current = null
+//         }
+
+//         watchSubRef.current = await Location.watchPositionAsync(
+//           { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 5, timeInterval: 1000 },
+//           (loc: any) => {
+//             const pos: Position = [loc.coords.longitude, loc.coords.latitude]
+//             setCurrentPos(pos)
+//             if (typeof loc.coords.heading === 'number' && !Number.isNaN(loc.coords.heading)) {
+//               setCurrentHeading(loc.coords.heading)
+//             }
+
+//             if (routeCoords && routeCoords.length) {
+//               try {
+//                 const nearest = nearestCoordIndex(pos, routeCoords)
+//                 const idx = (nearest && (nearest.index ?? nearest)) as number
+//                 setNearestIdx(idx)
+//                 const rem = remainingDistanceFrom(idx, routeCoords, pos)
+//                 setRemaining(rem)
+//                 setEta(calculateArrivalTime(rem))
+//                 const speed = loc.coords.speed ?? previousSpeedRef.current ?? 0
+//                 const smooth = smoothSpeed(speed, previousSpeedRef.current ?? 0)
+//                 previousSpeedRef.current = speed
+//                 setCurrentSpeed(smooth)
+
+//                 const delivery = routeCoords[routeCoords.length - 1]
+//                 const dToDelivery = haversine(pos, delivery)
+//                 if (journeyPhase === 'TO_DELIVERY' && dToDelivery <= 50) setCanConfirmDelivery(true)
+//               } catch (e) {
+//                 // ignore
+//               }
+//             }
+//           }
+//         )
+//       } catch (watchErr) {
+//         console.warn('Failed to start location watcher for delivery nav:', watchErr)
+//       }
+
+//       setNavActive(true)
+//       setJourneyPhase('TO_DELIVERY')
+//       setCanConfirmDelivery(false)
+
+//       try { Speech.speak('Bắt đầu dẫn đường đến điểm giao hàng', { language: 'vi-VN' }) } catch {}
+
+//       if (tripId) {
+//         try {
+//           await saveNavSession(`trip:${tripId}`, { startedAt: Date.now(), routeSummary: { points: routeCoords.length } })
+//         } catch (e) { console.warn('saveNavSession fail', e) }
+//       }
+//     } catch (err) {
+//       console.warn('beginDeliveryNavigation error', err)
+//     }
+//   }
+
+//   const stopNavigation = async () => {
+//     if (watchSubRef.current) {
+//       try {
+//         watchSubRef.current.remove()
+//       } catch (e) {
+//         console.error('Error removing location watcher:', e)
+//       }
+//       watchSubRef.current = null
+//     }
+
+//     if (tripId) {
+//       await clearNavSession(`trip:${tripId}`)
+//     }
+
+//     setNavActive(false)
+//     // clear minimized/hidden UI state when stopping navigation
+//     setNavMinimized(false)
+//     setNavHidden(false)
+//     setCurrentPos(null)
+//     setNearestIdx(0)
+//     setRemaining(0)
+//     setJourneyPhase('TO_PICKUP')
+//     // unset pickup mark when navigation stops
+//     try {
+//       await markPickup(false)
+//     } catch (e) {
+//       setPickupMarked(false)
+//     }
+
+//     try {
+//       Speech.speak('Kết thúc dẫn đường', { language: 'vi-VN' })
+//     } catch (e) {
+//       console.log('Text-to-speech not available:', e)
+//     }
+//   }
+
+//   const confirmPickup = () => {
+//     ;(async () => {
+//       // Immediate action: mark arrived at pickup
+//       try {
+//         await markPickup(true)
+//       } catch (e) {
+//         setPickupMarked(true)
+//       }
+//       setCanConfirmPickup(false)
+
+//       try {
+//         Speech.speak('Đã tới nơi lấy hàng. Đang tính toán tuyến đến điểm giao hàng', { language: 'vi-VN' })
+//       } catch (e) { console.log('Text-to-speech error:', e) }
+
+//       // Plan route from current position (or last known) to delivery
+//       const deliveryPoint = (routeCoords && routeCoords.length) ? routeCoords[routeCoords.length - 1] : endPoint
+//       const from = currentPos || (routeCoords && routeCoords.length ? routeCoords[0] : startPoint)
+//       let planningFailed = false
+//       if (from && deliveryPoint) {
+//         try {
+//           const planned = await vietmapService.planBetweenPoints(from as [number, number], deliveryPoint as [number, number], 'car')
+//           try { console.debug('confirmPickup planned', { coordsLen: planned.coordinates?.length ?? 0, instrCount: planned.instructions?.length ?? 0 }) } catch {}
+//           if (planned.coordinates?.length) {
+//             setRouteCoords(planned.coordinates as [number, number][])
+//             if (planned.instructions) setRouteInstructions(planned.instructions)
+//             setStartPoint(planned.coordinates[0] as [number, number])
+//             setEndPoint(planned.coordinates[planned.coordinates.length - 1] as [number, number])
+//           }
+//         } catch (err) {
+//           console.warn('Replan to delivery failed:', err)
+//           planningFailed = true
+//           await showToast('Không thể tính tuyến đến điểm giao. Vui lòng kiểm tra kết nối và thử lại.')
+//         }
+//       }
+
+//       // If a pickup delivery record exists, open it for signing. Navigation will only start later when both signatures exist.
+//       try {
+//         const pickupRecord = trip?.deliveryRecords?.find((r: any) => r.type === 'PICKUP' || r.recordType === 'PICKUP')
+//         if (pickupRecord) {
+//           setLoadingDeliveryRecord(true)
+//           try {
+//             const res = await tripService.getDeliveryRecordForDriver(pickupRecord.tripDeliveryRecordId)
+//             if (res?.isSuccess) {
+//               setActiveDeliveryRecord(res.result)
+//               setDeliveryModalOpen(true)
+//             } else {
+//               await showToast(res?.message || 'Không thể tải biên bản lấy hàng')
+//               // If no record could be loaded and planning succeeded, start navigation
+//               if (!planningFailed) await beginDeliveryNavigation()
+//             }
+//           } catch (e) {
+//             console.warn('Failed to load pickup record after confirmPickup', e)
+//             if (!planningFailed) await beginDeliveryNavigation()
+//           } finally {
+//             setLoadingDeliveryRecord(false)
+//           }
+//         } else {
+//           // No pickup record exists — start navigation if planning succeeded
+//           if (!planningFailed) {
+//             await beginDeliveryNavigation()
+//           } else {
+//             // planning failed and no record — user must retry
+//             await showToast('Không thể bắt đầu dẫn đường vì tính tuyến thất bại.')
+//           }
+//         }
+//       } catch (e) {
+//         console.warn('confirmPickup flow error:', e)
+//       }
+//     })()
+//   }
+
+//   const confirmDelivery = () => {
+//     Alert.alert(
+//       'Xác nhận đã giao hàng',
+//       'Bạn đã giao hàng thành công cho người nhận?',
+//       [
+//         { text: 'Chưa', style: 'cancel' },
+//         {
+//           text: 'Đã giao hàng',
+//           onPress: () => {
+//             setJourneyPhase('COMPLETED')
+//             setCanConfirmDelivery(false)
+//             try {
+//               Speech.speak('Đã hoàn thành giao hàng', { language: 'vi-VN' })
+//             } catch (e) {
+//               console.log('Text-to-speech error:', e)
+//             }
+//             // Do not auto-stop navigation here. Navigation remains active until user presses Stop.
+//           }
+//         }
+//       ]
+//     )
+//   }
+
+//   const openExternalMaps = async () => {
+//     const dest = lastCoord(routeCoords)
+//     const url = Platform.select({
+//       ios: buildAppleMapsLink(currentPos, dest),
+//       android: buildGoogleMapsLink(currentPos, dest),
+//       default: buildGoogleMapsLink(currentPos, dest)
+//     })
+//     if (!url) { 
+//       Alert.alert('Dẫn đường', 'Thiếu điểm đến để mở bản đồ.')
+//       return 
+//     }
+//     try { 
+//       await Linking.openURL(url) 
+//     } catch { 
+//       Alert.alert('Dẫn đường', 'Không thể mở ứng dụng bản đồ.') 
+//     }
+//   }
+
+//   // Helper functions
+//   const canStartJourney = (): boolean => {
+//     if (navActive) return false
+//     if (startingNav) return false
+//     if (!trip) return false
+    
+//     const blockedStatuses = ['COMPLETED', 'CANCELLED']
+//     if (blockedStatuses.includes(trip.status)) return false
+    
+//     return true
+//   }
+
+//   const showToast = (msg: string, ms = 1500) => {
+//     return new Promise<void>((resolve) => {
+//       try {
+//         setToastMsg(msg)
+//         setTimeout(() => {
+//           setToastMsg(null)
+//           resolve()
+//         }, ms)
+//       } catch (e) {
+//         setToastMsg(null)
+//         resolve()
+//       }
+//     })
+//   }
+
+//   const getStartButtonText = (): string => {
+//     if (navActive) return '✅ Đang dẫn đường'
+//     if (startingNav) return '⏳ Đang chuẩn bị...'
+//     if (!trip) return '❌ Không có dữ liệu'
+    
+//     switch (trip.status) {
+//       case 'COMPLETED':
+//         return '✅ Đã hoàn thành'
+//       case 'CANCELLED':
+//         return '❌ Đã hủy'
+//       default:
+//         return '🚗 Bắt đầu dẫn đường'
+//     }
+//   }
+
+//   const handleStartJourney = () => {
+//     if (!canStartJourney()) {
+//       if (!trip) {
+//         Alert.alert('Lỗi', 'Không có dữ liệu chuyến đi')
+//         return
+//       }
+      
+//       if (trip.status === 'COMPLETED') {
+//         Alert.alert('Chuyến đã hoàn thành', 'Chuyến đi này đã được hoàn thành.')
+//         return
+//       }
+//       if (trip.status === 'CANCELLED') {
+//         Alert.alert('Chuyến đã bị hủy', 'Chuyến đi này đã bị hủy bỏ.')
+//         return
+//       }
+//     }
+    
+//     setStartModalOpen(true)
+
+//     // If we don't yet have instructions, try to precompute a full-trip plan
+//     // in background so the modal can show upcoming steps.
+//     if ((!routeInstructions || routeInstructions.length === 0) && routeCoords.length > 1) {
+//       ;(async () => {
+//         try {
+//           const planned = await vietmapService.planBetweenPoints(routeCoords[0], routeCoords[routeCoords.length - 1], 'car')
+//           try { console.debug('precompute planned', { instrCount: planned?.instructions?.length ?? 0 }) } catch {}
+//           if (planned && planned.instructions) {
+//             setRouteInstructions(planned.instructions)
+//           }
+//         } catch (e) {
+//           // ignore precompute failures
+//           console.warn('Precompute route failed:', e)
+//         }
+//       })()
+//     }
+//   }
+
+//   // Get primary driver and sender/receiver contacts
+//   const primaryDriver = trip?.drivers?.find(d => d.type === 'PRIMARY')
+//   const senderContact = trip?.contacts?.find(c => c.type === 'SENDER')
+//   const receiverContact = trip?.contacts?.find(c => c.type === 'RECEIVER')
+
+//   if (loading) {
+//     return (
+//       <SafeAreaView style={styles.centered}>
+//         <ActivityIndicator size="large" color="#4F46E5" />
+//         <Text style={{ marginTop: 8, fontFamily: 'System' }}>Đang tải chi tiết chuyến...</Text>
+//       </SafeAreaView>
+//     )
+//   }
+
+//   if (error || !trip) {
+//     return (
+//       <SafeAreaView style={styles.centered}>
+//         <Text style={styles.errorText}>{error || 'Không tìm thấy dữ liệu chuyến.'}</Text>
+//         <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 12 }}>
+//           <Text style={{ color: '#4F46E5', fontWeight: '600', fontFamily: 'System' }}>← Quay lại</Text>
+//         </TouchableOpacity>
+//       </SafeAreaView>
+//     )
+//   }
+
+//   const KeyValue = ({ label, value }: { label: string; value: React.ReactNode }) => (
+//     <View style={styles.kvRow}>
+//       <Text style={styles.kvLabel}>{label}</Text>
+//       <Text style={styles.kvValue}>{value}</Text>
+//     </View>
+//   )
+
+//   return (
+//     <>
+//       <SafeAreaView style={styles.container}>
+//         <View style={styles.header}>
+//           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+//             <Text style={styles.backText}>←</Text>
+//           </TouchableOpacity>
+//           <Text style={styles.title}>Chi tiết chuyến v2</Text>
+//           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+//             <StatusPill value={trip.status} />
+//           </View>
+//         </View>
+
+//         {toastMsg ? (
+//           <View style={styles.toastContainer} pointerEvents="none">
+//             <Text style={styles.toastText}>{toastMsg}</Text>
+//           </View>
+//         ) : null}
+
+//         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
+//           {/* Compact Trip Summary */}
+//           <View style={styles.card}>
+//             <Text style={styles.sectionTitle}>📋 Tóm tắt chuyến</Text>
+//             <KeyValue label="Mã chuyến" value={trip.tripCode} />
+//             <KeyValue label="Trạng thái" value={<StatusPill value={trip.status} />} />
+//             <KeyValue label="Điểm lấy" value={trip.shippingRoute.startAddress} />
+//             <KeyValue label="Điểm giao" value={trip.shippingRoute.endAddress} />
+//             <KeyValue label="Xe" value={`${trip.vehicle.plateNumber} • ${trip.vehicle.vehicleTypeName}`} />
+//             <KeyValue label="Tài xế" value={primaryDriver ? primaryDriver.fullName : 'Chưa có'} />
+//             <KeyValue label="Số kiện" value={`${trip.packages.length}`} />
+//           </View>
+
+//           {/* VietMap Integration */}
+//           <View style={styles.card}>
+//             <Text style={styles.sectionTitle}>🗺️ Bản đồ & Dẫn đường</Text>
+//             <View style={styles.mapBox}>
+//               <VietMapUniversal
+//                 coordinates={routeCoords}
+//                 style={{ height: 300 }}
+//                 showUserLocation={false}
+//                 navigationActive={false}
+//                 onLocationUpdate={(pos) => console.log('Location:', pos)}
+//                 externalLocation={currentPos}
+//                 userMarkerBearing={currentHeading ?? undefined}
+//                 useWebNavigation={false}
+//                 instructions={(routeInstructions || []).map((ins: any) => ins?.text || ins?.road || ins?.street_name || '')}
+//               />
+              
+//               <View style={styles.mapOverlay}>
+//                 <TouchableOpacity
+//                   style={styles.centerFab}
+//                   onPress={() => {
+//                     if (currentPos) {
+//                       // create a new array instance so `externalLocation` prop changes and map can react
+//                       setCurrentPos([currentPos[0], currentPos[1]])
+//                     } else {
+//                       Alert.alert('Vị trí không khả dụng', 'Không thể lấy vị trí hiện tại')
+//                     }
+//                   }}
+//                 >
+//                   <Text style={styles.centerFabText}>📍</Text>
+//                 </TouchableOpacity>
+//                 <TouchableOpacity
+//                   style={[
+//                     styles.mapFab,
+//                     (!canStartJourney()) && styles.mapFabDisabled
+//                   ]}
+//                   onPress={handleStartJourney}
+//                   disabled={!canStartJourney()}
+//                 >
+//                   <Text style={[
+//                     styles.mapFabText,
+//                     (!canStartJourney()) && styles.mapFabTextDisabled
+//                   ]}>
+//                     {getStartButtonText()}
+//                   </Text>
+//                 </TouchableOpacity>
+//                 {/* map instructions overlay removed — instructions shown in navigation panel when active */}
+                
+//                 {/* <View style={styles.routeInfoBadge}>
+//                   <Text style={styles.routeInfoText}>
+//                     📍 {routeCoords.length} điểm
+//                     {trip.tripRoute?.distanceKm && (
+//                       <Text style={{ color: '#FFD700' }}>
+//                         {' • '}{trip.tripRoute.distanceKm.toFixed(1)} km
+//                       </Text>
+//                     )}
+//                   </Text>
+//                 </View> */}
+//               </View>
+//             </View>
+//             {/* non-modal summary removed — instructions only shown in navigation UI when active */}
+//           </View>
+
+//           {/* Delivery Records Information */}
+//           {trip.deliveryRecords?.length > 0 && (
+//             <View style={styles.card}>
+//               <Text style={styles.sectionTitle}>📋 Biên bản giao nhận</Text>
+//                       {trip.deliveryRecords.map((record, index) => (
+//                         <View key={record.tripDeliveryRecordId} style={styles.recordContainer}>
+//                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+//                             <Text style={styles.recordType}>
+//                               {record.recordType === 'PICKUP' ? '📤 Biên bản nhận hàng' : '📥 Biên bản giao hàng'}
+//                             </Text>
+//                             <TouchableOpacity
+//                               style={styles.viewRecordBtn}
+//                               onPress={async () => {
+//                                 try {
+//                                   setLoadingDeliveryRecord(true)
+//                                   const res = await tripService.getDeliveryRecordForDriver(record.tripDeliveryRecordId)
+//                                   if (res?.isSuccess) {
+//                                     setActiveDeliveryRecord(res.result)
+//                                     setDeliveryModalOpen(true)
+//                                   } else {
+//                                     Alert.alert('Lỗi', res?.message || 'Không thể tải biên bản')
+//                                   }
+//                                 } catch (e) {
+//                                   console.warn('Failed to load delivery record', e)
+//                                   Alert.alert('Lỗi', 'Không thể tải biên bản. Vui lòng thử lại.')
+//                                 } finally {
+//                                   setLoadingDeliveryRecord(false)
+//                                 }
+//                               }}
+//                             >
+//                               <Text style={styles.viewRecordBtnText}>Xem biên bản</Text>
+//                             </TouchableOpacity>
+//                           </View>
+//                           <Text style={styles.recordNote}>{record.note}</Text>
+//                           <Text style={styles.recordDate}>
+//                             Tạo lúc: {new Date(record.createAt).toLocaleString('vi-VN')}
+//                           </Text>
+//                         </View>
+//                       ))}
+//             </View>
+//           )}
+
+//                 {/* Delivery Record Modal */}
+//                 {deliveryModalOpen && activeDeliveryRecord ? (
+//                   <View style={styles.deliveryModalBackdrop}>
+//                     <View style={styles.deliveryModalCard}>
+//                       <ScrollView contentContainerStyle={{ padding: 18 }}>
+//                         {/* Paper-like A4 container */}
+//                         <View style={styles.paperRoot}>
+//                           <View style={styles.paperHeaderRow}>
+//                             <View style={{ flex: 1 }}>
+//                               <Text style={styles.companyName}>{trip?.provider?.companyName || 'CÔNG TY............'}</Text>
+//                               <Text style={styles.smallMuted}>{trip?.provider?.taxCode ? `MST: ${trip.provider.taxCode}` : ''}</Text>
+//                             </View>
+//                             <View style={{ flex: 1, alignItems: 'flex-end' }}>
+//                               <Text style={styles.govHeader}>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</Text>
+//                               <Text style={styles.govSubHeader}>Độc lập - Tự do - Hạnh phúc</Text>
+//                             </View>
+//                           </View>
+
+//                           <View style={styles.paperMetaRow}>
+//                             <Text style={styles.docNumber}>Số: {activeDeliveryRecord.tripDeliveryRecordId}</Text>
+//                             <Text style={styles.docDate}>{activeDeliveryRecord.createAt ? new Date(activeDeliveryRecord.createAt).toLocaleDateString('vi-VN') : ''}</Text>
+//                           </View>
+
+//                           <Text style={styles.docMainTitle}>BIÊN BẢN GIAO NHẬN</Text>
+
+//                           <View style={styles.paperIntro}>
+//                             <Text style={styles.modalSmall}>Loại: {activeDeliveryRecord.type}</Text>
+//                             <Text style={styles.modalSmall}>Mã chuyến: {activeDeliveryRecord.tripId || activeDeliveryRecord.tripDetail?.tripCode}</Text>
+//                             <Text style={styles.modalSmall}>Trạng thái: {activeDeliveryRecord.status}</Text>
+//                             {activeDeliveryRecord.notes ? <Text style={[styles.modalSmall, { marginTop: 6 }]}>Ghi chú: {activeDeliveryRecord.notes}</Text> : null}
+//                           </View>
+
+//                           {/* Parties */}
+//                           <View style={styles.partiesRowPaper}>
+//                             <View style={styles.partyBoxPaper}>
+//                               <Text style={styles.partyTitle}>BÊN NHẬN (Người nhận)</Text>
+//                               <Text style={styles.partyLine}><Text style={styles.fieldLabel}>Họ tên: </Text>{activeDeliveryRecord.tripContact?.fullName || '—'}</Text>
+//                               <Text style={styles.partyLine}><Text style={styles.fieldLabel}>SĐT: </Text>{activeDeliveryRecord.tripContact?.phoneNumber || '—'}</Text>
+//                             </View>
+
+//                             <View style={styles.partyBoxPaper}>
+//                               <Text style={styles.partyTitle}>TÀI XẾ</Text>
+//                               <Text style={styles.partyLine}><Text style={styles.fieldLabel}>Họ tên: </Text>{activeDeliveryRecord.driverPrimary?.fullName || '—'}</Text>
+//                               <Text style={styles.partyLine}><Text style={styles.fieldLabel}>SĐT: </Text>{activeDeliveryRecord.driverPrimary?.phoneNumber || '—'}</Text>
+//                             </View>
+//                           </View>
+
+//                           {/* Items table with thumbnails */}
+//                           <View style={{ marginTop: 12 }}>
+//                             <View style={styles.tableHeaderRow}>
+//                               <Text style={[styles.tableCell, styles.colStt]}>STT</Text>
+//                               <Text style={[styles.tableCell, styles.colName]}>Tên hàng</Text>
+//                               <Text style={[styles.tableCell, styles.colSpec]}>Mô tả</Text>
+//                               <Text style={[styles.tableCell, styles.colUnit]}>ĐVT</Text>
+//                               <Text style={[styles.tableCell, styles.colQty]}>Số lượng</Text>
+//                             </View>
+
+//                             {(activeDeliveryRecord.tripDetail?.packages || []).map((p: any, idx: number) => (
+//                               <View key={p.packageId || idx}>
+//                                 <View style={styles.tableRow}>
+//                                   <Text style={[styles.tableCell, styles.colStt]}>{idx + 1}</Text>
+//                                   <View style={[styles.tableCell, styles.colName, { flexDirection: 'row', alignItems: 'center' }]}>
+//                                     {p.imageUrls && p.imageUrls.length ? (
+//                                       <Image source={{ uri: p.imageUrls[0] }} style={styles.packageImageThumb} />
+//                                     ) : p.item?.imageUrls && p.item.imageUrls.length ? (
+//                                       <Image source={{ uri: p.item.imageUrls[0] }} style={styles.packageImageThumb} />
+//                                     ) : null}
+//                                     <Text style={{ marginLeft: 8 }}>{p.title || p.packageCode || '-'}</Text>
+//                                   </View>
+//                                   <Text style={[styles.tableCell, styles.colSpec]}>{p.description || p.item?.name || '-'}</Text>
+//                                   <Text style={[styles.tableCell, styles.colUnit]}>{p.unit || 'Cái'}</Text>
+//                                   <Text style={[styles.tableCell, styles.colQty]}>{p.quantity ?? 1}</Text>
+//                                 </View>
+
+//                                 {/* Item details expanded */}
+//                                 {p.item && (
+//                                   <View style={styles.itemDetailsRow}>
+//                                     <View style={styles.itemImagesRow}>
+//                                       {(p.item.imageUrls || []).map((uri: string, i: number) => (
+//                                         <Image key={i} source={{ uri }} style={styles.itemImageLarge} />
+//                                       ))}
+//                                     </View>
+//                                     <View style={styles.itemDetailsTextCol}>
+//                                       <Text style={styles.itemTitleLarge}>{p.item.name}</Text>
+//                                       {p.item.itemCode ? <Text style={styles.itemMeta}>Mã hàng: {p.item.itemCode}</Text> : null}
+//                                       <Text style={styles.itemMeta}>Trọng lượng: {p.weightKg ?? p.weight ?? '-'} kg • Thể tích: {p.volumeM3 ?? '-'} m³</Text>
+//                                       {p.handlingAttributes && p.handlingAttributes.length ? (
+//                                         <Text style={styles.itemMeta}>Thuộc tính: {p.handlingAttributes.join(', ')}</Text>
+//                                       ) : null}
+//                                     </View>
+//                                   </View>
+//                                 )}
+//                               </View>
+//                             ))}
+//                           </View>
+
+//                           {/* Terms */}
+//                           {activeDeliveryRecord.deliveryRecordTemplate?.deliveryRecordTerms?.length ? (
+//                             <View style={styles.termsBlock}>
+//                               <Text style={styles.modalSectionTitle}>Các điều khoản</Text>
+//                               {activeDeliveryRecord.deliveryRecordTemplate.deliveryRecordTerms.map((t: any) => (
+//                                 <Text key={t.deliveryRecordTermId} style={styles.modalText}>• {t.displayOrder}. {t.content}</Text>
+//                               ))}
+//                             </View>
+//                           ) : null}
+
+//                           {/* Signature status hint: start only when both signed */}
+//                           <View style={styles.signatureStatusRow}>
+//                             <Text style={styles.signatureHint}>Bắt đầu khi cả hai đã ký</Text>
+//                             <View style={styles.signatureStatusBadges}>
+//                               <View style={styles.signatureStatusBadge}>
+//                                 <Text style={styles.signatureStatusBadgeText}>🚚 Tài xế: {activeDeliveryRecord.driverSigned ? 'Đã ký' : 'Chưa ký'}</Text>
+//                               </View>
+//                               <View style={styles.signatureStatusBadge}>
+//                                 <Text style={styles.signatureStatusBadgeText}>👤 Người nhận: {activeDeliveryRecord.contactSigned ? 'Đã ký' : 'Chưa ký'}</Text>
+//                               </View>
+//                             </View>
+//                           </View>
+
+//                           {/* Signatures area */}
+//                           <View style={styles.signatureRowPaper}>
+//                             <View style={styles.signatureBoxPaper}>
+//                               <Text style={styles.signatureTitle}>BÊN NHẬN</Text>
+//                               <Text style={styles.signatureSub}>{activeDeliveryRecord.contactSigned ? `Đã ký (${activeDeliveryRecord.contactSignedAt ? new Date(activeDeliveryRecord.contactSignedAt).toLocaleString('vi-VN') : ''})` : 'Chưa ký'}</Text>
+//                             </View>
+
+//                             <View style={styles.signatureBoxPaper}>
+//                               <Text style={styles.signatureTitle}>TÀI XẾ</Text>
+//                               <Text style={styles.signatureSub}>{activeDeliveryRecord.driverSigned ? `Đã ký (${activeDeliveryRecord.driverSignedAt ? new Date(activeDeliveryRecord.driverSignedAt).toLocaleString('vi-VN') : ''})` : 'Chưa ký'}</Text>
+//                             </View>
+//                           </View>
+
+//                           <View style={styles.paperFooter}>
+//                             <Text style={styles.smallMuted}>Biên bản này được tạo tự động trên hệ thống DriveShare.</Text>
+//                           </View>
+//                         </View>
+//                       </ScrollView>
+
+//                       <View style={styles.deliveryModalActions}>
+//                         <TouchableOpacity
+//                           style={styles.modalPdfBtn}
+//                           onPress={async () => {
+//                             try {
+//                               const r = await tripService.getDeliveryRecordPdfLink(activeDeliveryRecord.tripDeliveryRecordId)
+//                               if (r?.isSuccess && r.result) {
+//                                 const url = r.result
+//                                 Linking.openURL(url)
+//                               } else {
+//                                 Alert.alert('PDF', 'PDF không khả dụng')
+//                               }
+//                             } catch (e) {
+//                               console.warn('pdf link fail', e)
+//                               Alert.alert('Lỗi', 'Không thể tải PDF')
+//                             }
+//                           }}
+//                         >
+//                           <Text style={styles.modalPdfText}>Tải PDF</Text>
+//                         </TouchableOpacity>
+
+//                         <TouchableOpacity
+//                           style={[styles.modalSignBtn, (activeDeliveryRecord.driverSigned || activeDeliveryRecord.status !== 'PENDING' || (activeDeliveryRecord.type === 'PICKUP' && !pickupMarked)) && { opacity: 0.6 }]}
+//                           onPress={async () => {
+//                             // Require driver to press Đã lấy hàng before signing pickup record
+//                             if (activeDeliveryRecord.type === 'PICKUP' && !pickupMarked) {
+//                               Alert.alert('Yêu cầu', 'Vui lòng xác nhận đã lấy hàng trước khi ký biên bản.')
+//                               return
+//                             }
+
+//                             // Guard by status and signature combo
+//                             if (activeDeliveryRecord.driverSigned) {
+//                               Alert.alert('Thông báo', 'Bạn đã ký biên bản này.')
+//                               return
+//                             }
+//                             if (activeDeliveryRecord.status === 'COMPLETED' || activeDeliveryRecord.status === 'CANCELLED') {
+//                               Alert.alert('Không thể ký', 'Biên bản đã hoàn thành hoặc bị hủy.')
+//                               return
+//                             }
+
+//                             try {
+//                               setSignatureInProgress(true)
+//                               const resp = await tripService.signDeliveryRecordAsDriver(activeDeliveryRecord.tripDeliveryRecordId)
+
+//                               // Backend may return a structured response with isSuccess/statusCode/message
+//                               if (resp?.isSuccess) {
+//                                 const refreshed = await tripService.getDeliveryRecordForDriver(activeDeliveryRecord.tripDeliveryRecordId)
+//                                 if (refreshed?.isSuccess) {
+//                                   setActiveDeliveryRecord(refreshed.result)
+//                                   // Strict rule: require BOTH driver and contact signatures before auto-starting delivery nav
+//                                   const isPickup = (refreshed.result?.type === 'PICKUP' || activeDeliveryRecord.type === 'PICKUP')
+//                                   const bothSigned = !!(refreshed.result?.driverSigned && refreshed.result?.contactSigned)
+//                                   // Close modal and show toast first
+//                                   setDeliveryModalOpen(false)
+//                                   setActiveDeliveryRecord(null)
+//                                   await showToast('Ký biên bản thành công')
+//                                   if (isPickup && bothSigned) {
+//                                     // begin navigation to delivery only when both parties have signed
+//                                     try {
+//                                       if (!navActive) {
+//                                         await beginDeliveryNavigation()
+//                                       } else {
+//                                         // if navigation already active, ensure phase is TO_DELIVERY
+//                                         setJourneyPhase('TO_DELIVERY')
+//                                       }
+//                                     } catch (e) {
+//                                       console.warn('Failed to auto-start delivery navigation after both signatures:', e)
+//                                       await showToast('Không thể bắt đầu dẫn đường tự động. Vui lòng thử lại.')
+//                                     }
+//                                   }
+//                                 } else {
+//                                   // still show success toast even if refresh failed
+//                                   setDeliveryModalOpen(false)
+//                                   setActiveDeliveryRecord(null)
+//                                   await showToast('Ký biên bản thành công')
+//                                 }
+//                                 return
+//                               }
+
+//                               // If backend returned 200 but isSuccess is false, show message or map statusCode
+//                               const code = resp?.statusCode
+//                               const msg = resp?.message || 'Không thể ký biên bản'
+//                               if (code === 401) {
+//                                 Alert.alert('Không xác thực', 'Bạn chưa đăng nhập hoặc phiên đã hết hạn. Vui lòng đăng nhập lại.')
+//                               } else if (code === 403) {
+//                                 Alert.alert('Không có quyền', msg || 'Bạn không có quyền ký biên bản này.')
+//                               } else if (code === 400) {
+//                                 Alert.alert('Không thể ký', msg)
+//                               } else {
+//                                 Alert.alert('Lỗi', msg)
+//                               }
+//                             } catch (err: any) {
+//                               console.warn('sign failed', err)
+//                               // axios error handling
+//                               const status = err?.response?.status
+//                               const dataMsg = err?.response?.data?.message || err?.message || ''
+//                               if (status === 401) {
+//                                 Alert.alert('Không xác thực', 'Bạn chưa đăng nhập hoặc phiên đã hết hạn. Vui lòng đăng nhập lại.')
+//                               } else if (status === 403) {
+//                                 Alert.alert('Không có quyền', 'Bạn không được phép ký biên bản này.')
+//                               } else if (status === 400) {
+//                                 Alert.alert('Không thể ký', dataMsg || 'Yêu cầu không hợp lệ.')
+//                               } else {
+//                                 Alert.alert('Lỗi', `Ký biên bản thất bại. ${dataMsg}`)
+//                               }
+//                             } finally {
+//                               setSignatureInProgress(false)
+//                             }
+//                           }}
+//                           disabled={signatureInProgress || activeDeliveryRecord.driverSigned || activeDeliveryRecord.status !== 'PENDING' || (activeDeliveryRecord.type === 'PICKUP' && !pickupMarked)}
+//                         >
+//                           <Text style={styles.modalSignText}>{activeDeliveryRecord.driverSigned ? 'Đã ký' : (activeDeliveryRecord.contactSigned ? 'Ký xác nhận' : 'Ký xác nhận')}</Text>
+//                         </TouchableOpacity>
+
+//                         <TouchableOpacity style={styles.modalCloseBtn} onPress={() => { setDeliveryModalOpen(false); setActiveDeliveryRecord(null) }}>
+//                           <Text style={styles.modalCloseText}>Đóng</Text>
+//                         </TouchableOpacity>
+//                       </View>
+//                     </View>
+//                   </View>
+//                 ) : null}
+//         </ScrollView>
+
+//         {/* Enhanced Start Modal */}
+//         {startModalOpen && !navActive ? (
+//           <View style={styles.startModalBackdrop}>
+//             <View style={styles.startModalCard}>
+//               <View style={styles.startModalHeader}>
+//                 <Text style={styles.startModalTitle}>🚗 Bắt đầu hành trình</Text>
+//                 <Text style={styles.startModalSubtitle}>Chuyến #{trip.tripCode}</Text>
+//               </View>
+//               <View style={styles.startModalContent}>
+//                 <View style={styles.routeInfo}>
+//                   <View style={styles.routeStep}>
+//                     <View style={styles.routeStepIcon}>
+//                       <Text style={styles.routeStepEmoji}>📍</Text>
+//                     </View>
+//                     <Text style={styles.routeStepText}>Vị trí hiện tại</Text>
+//                   </View>
+//                   <View style={styles.routeArrow}>
+//                     <Text style={styles.routeArrowText}>↓</Text>
+//                   </View>
+//                   <View style={styles.routeStep}>
+//                     <View style={styles.routeStepIcon}>
+//                       <Text style={styles.routeStepEmoji}>📦</Text>
+//                     </View>
+//                     <Text style={styles.routeStepText}>Điểm lấy hàng</Text>
+//                   </View>
+//                   <View style={styles.routeArrow}>
+//                     <Text style={styles.routeArrowText}>↓</Text>
+//                   </View>
+//                   <View style={styles.routeStep}>
+//                     <View style={styles.routeStepIcon}>
+//                       <Text style={styles.routeStepEmoji}>🎯</Text>
+//                     </View>
+//                     <Text style={styles.routeStepText}>Điểm giao hàng</Text>
+//                   </View>
+//                 </View>
+                
+//                 {/* (Instructions removed from modal - shown on map overlay instead) */}
+
+//                 {startingNav && (
+//                   <View style={styles.startingIndicator}>
+//                     <ActivityIndicator size="small" color="#059669" />
+//                     <Text style={styles.startingText}>Đang tính toán tuyến đường...</Text>
+//                   </View>
+//                 )}
+//               </View>
+//               <View style={styles.startActionsRow}>
+//                 <TouchableOpacity
+//                   style={[styles.startBtn, styles.dangerBtn]}
+//                   onPress={() => setStartModalOpen(false)}
+//                   disabled={startingNav}
+//                 >
+//                   <Text style={styles.dangerText}>❌ Hủy</Text>
+//                 </TouchableOpacity>
+//                 <TouchableOpacity
+//                   style={[styles.startBtn, styles.successBtn]}
+//                   onPress={startNavigation}
+//                   disabled={startingNav}
+//                 >
+//                   <Text style={styles.successText}>
+//                     {startingNav ? '⏳ Đang chuẩn bị...' : '🚀 Bắt đầu dẫn đường'}
+//                   </Text>
+//                 </TouchableOpacity>
+//               </View>
+//             </View>
+//           </View>
+//         ) : null}
+
+//         {/* Full-screen Navigation (hidden when minimized) */}
+//         {navActive && !navMinimized ? (
+//           <View style={styles.navFullscreen}>
+//             <VietMapUniversal
+//               coordinates={routeCoords}
+//               style={{ flex: 1, backgroundColor: '#000000' }}
+//               showUserLocation={true}
+//               navigationActive={true}
+//               onLocationUpdate={(pos) => setCurrentPos(pos)}
+//               externalLocation={currentPos}
+//               userMarkerBearing={currentHeading ?? undefined}
+//               useWebNavigation={true}
+//               instructions={(routeInstructions || []).map((ins: any) => ins?.text || ins?.road || ins?.street_name || '')}
+//             />
+            
+//             <NavigationHUD
+//               nextInstruction={journeyPhase === 'TO_PICKUP' ? 'Đến điểm lấy hàng' : 'Đến điểm giao hàng'}
+//               distanceToNextInstruction={formatMeters(remaining)}
+//               remainingDistance={formatMeters(remaining)}
+//               eta={eta}
+//               currentSpeed={formatSpeed(currentSpeed)}
+//               visible={true}
+//             />
+//             {/* Instructions panel while navigating — dark bottom area */}
+//             <View style={styles.instructionsPanelDark} pointerEvents="box-none">
+//               <View style={styles.instructionsHeader}>
+//                 <View>
+//                   <Text style={styles.instructionsHeaderTitle}>{journeyPhase === 'TO_PICKUP' ? 'Đến điểm lấy hàng' : journeyPhase === 'TO_DELIVERY' ? 'Đến điểm giao hàng' : 'Hoàn thành'}</Text>
+//                   <Text style={styles.instructionsHeaderSub}>{formatMeters(remaining)} • ETA {eta}</Text>
+//                 </View>
+//                 <View style={styles.instructionsHeaderBadge}>
+//                   <Text style={styles.instructionsHeaderBadgeText}>{routeInstructions?.length ?? 0} bước</Text>
+//                 </View>
+//               </View>
+
+//               {routeInstructions && routeInstructions.length > 0 ? (
+//                 <ScrollView style={styles.instructionsPanelListDark} contentContainerStyle={{ paddingVertical: 8 }}>
+//                   {routeInstructions.slice(nearestIdx || 0, (nearestIdx || 0) + 12).map((ins: any, idx: number) => (
+//                     <View key={`nav-ins-${idx}`} style={styles.instructionRowDark}>
+//                       <View style={styles.instructionIconWrap}>
+//                         <Text style={styles.instructionIcon}>{ins.maneuver && ins.maneuver.type ? '↗' : '➡'}</Text>
+//                       </View>
+//                       <View style={styles.instructionTextWrapDark}>
+//                         <Text numberOfLines={2} style={styles.instructionTextDark}>{ins.text || ins.road || ins.street_name}</Text>
+//                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+//                           <Text style={styles.instructionMetaDark}>{ins.distance != null ? formatMeters(ins.distance) : ''}</Text>
+//                           {ins.duration != null ? <Text style={styles.instructionMetaDark}>{Math.round(ins.duration/60)} min</Text> : null}
+//                         </View>
+//                       </View>
+//                     </View>
+//                   ))}
+//                 </ScrollView>
+//               ) : (
+//                 <Text style={styles.noInstructionsTextDark}>Không có hướng dẫn chi tiết</Text>
+//               )}
+//             </View>
+            
+//             <View style={styles.phaseBadge}>
+//               <Text style={styles.phaseBadgeText}>
+//                 {journeyPhase === 'TO_PICKUP' ? '🚗 Đang đến lấy hàng' : 
+//                  journeyPhase === 'TO_DELIVERY' ? '📦 Đang giao hàng' : 
+//                  '✅ Hoàn thành'}
+//               </Text>
+//               <Text style={styles.phaseBadgeSubtext}>
+//                 Chuyến #{trip.tripCode}
+//               </Text>
+//             </View>
+            
+//             <View style={styles.navActions}>
+//               <TouchableOpacity
+//                 onPress={() => setNavMinimized(true)}
+//                 style={styles.minimizeButton}
+//                 accessibilityLabel="Minimize navigation"
+//               >
+//                 <Text style={styles.minimizeButtonText}>_</Text>
+//               </TouchableOpacity>
+//               {journeyPhase === 'TO_PICKUP' && (
+//                 <TouchableOpacity
+//                   onPress={confirmPickup}
+//                   disabled={!canConfirmPickup}
+//                   style={[
+//                     styles.actionButton,
+//                     styles.pickupButton,
+//                     !canConfirmPickup && styles.actionButtonDisabled
+//                   ]}
+//                 >
+//                   <Text style={[
+//                     styles.actionButtonText,
+//                     !canConfirmPickup && styles.actionButtonTextDisabled
+//                   ]}>
+//                     📦 Đã tới nơi lấy hàng
+//                   </Text>
+//                 </TouchableOpacity>
+//               )}
+              
+//               {journeyPhase === 'TO_DELIVERY' && (
+//                 <TouchableOpacity
+//                   onPress={confirmDelivery}
+//                   disabled={!canConfirmDelivery}
+//                   style={[
+//                     styles.actionButton,
+//                     styles.deliveryButton,
+//                     !canConfirmDelivery && styles.actionButtonDisabled
+//                   ]}
+//                 >
+//                   <Text style={[
+//                     styles.actionButtonText,
+//                     !canConfirmDelivery && styles.actionButtonTextDisabled
+//                   ]}>
+//                     ✅ Đã giao hàng
+//                   </Text>
+//                 </TouchableOpacity>
+//               )}
+              
+//               <TouchableOpacity
+//                 onPress={stopNavigation}
+//                 style={[styles.actionButton, styles.stopButton]}
+//               >
+//                 <Text style={styles.actionButtonText}>⏹️ Dừng dẫn đường</Text>
+//               </TouchableOpacity>
+//             </View>
+//           </View>
+//         ) : null}
+
+//         {/* Minimized progress panel shown when navigation is active but minimized */}
+//         {navActive && navMinimized && !navHidden ? (
+//           <View style={styles.minimizedPanelContainer} pointerEvents="box-none">
+//             <View style={styles.minimizedPanel}>
+//               <View style={styles.minimizedLeft}>
+//                 <View style={styles.minimizedTitleRow}>
+//                   <Text style={styles.minimizedTitle}>{journeyPhase === 'TO_PICKUP' ? 'Đang đến lấy hàng' : journeyPhase === 'TO_DELIVERY' ? 'Đang giao hàng' : 'Đang hoạt động'}</Text>
+//                   <Text style={styles.minimizedEta}>{eta}</Text>
+//                 </View>
+//                 <Text style={styles.minimizedMeta}>{formatMeters(remaining)} • {routeInstructions?.length ?? 0} bước</Text>
+//                 <View style={styles.progressBarBackground}>
+//                   <View style={[styles.progressBarFill, { width: `${Math.min(100, Math.max(0, ((nearestIdx || 0) / Math.max(1, (routeCoords.length - 1 || 1))) * 100))}%` }]} />
+//                 </View>
+//               </View>
+//               <View style={styles.minimizedActions}>
+//                 <TouchableOpacity style={styles.minimizedOpenBtn} onPress={() => { setNavMinimized(false); setNavHidden(false); }}>
+//                   <Text style={styles.minimizedOpenText}>Mở</Text>
+//                 </TouchableOpacity>
+//                 <TouchableOpacity style={styles.minimizedHideBtn} onPress={() => { setNavHidden(true); setNavMinimized(false); }}>
+//                   <Text style={styles.minimizedHideText}>Ẩn</Text>
+//                 </TouchableOpacity>
+//                 <TouchableOpacity style={styles.minimizedStopBtn} onPress={() => { stopNavigation(); setNavHidden(false); setNavMinimized(false); }}>
+//                   <Text style={styles.minimizedStopText}>Dừng</Text>
+//                 </TouchableOpacity>
+//               </View>
+//             </View>
+//           </View>
+//         ) : null}
+
+//         {/* Collapsed tab when navigation is hidden */}
+//         {navActive && navHidden ? (
+//           <View style={styles.collapsedTabContainer} pointerEvents="box-none">
+//             <TouchableOpacity style={styles.collapsedTab} onPress={() => { setNavHidden(false); setNavMinimized(true); }}>
+//               <Text style={styles.collapsedTabText}>🧭</Text>
+//             </TouchableOpacity>
+//           </View>
+//         ) : null}
+//       </SafeAreaView>
+//     </>
+//   )
+// }
+
+// const styles = StyleSheet.create({
+//   container: { flex: 1, backgroundColor: '#F9FAFB' },
+//   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' },
+//   errorText: { color: '#EF4444', textAlign: 'center', paddingHorizontal: 20, fontFamily: 'System', fontSize: 16 },
+//   header: { 
+//     flexDirection: 'row', 
+//     alignItems: 'center', 
+//     justifyContent: 'space-between', 
+//     paddingHorizontal: 16, 
+//     paddingVertical: 12, 
+//     backgroundColor: '#FFFFFF', 
+//     borderBottomWidth: 1, 
+//     borderBottomColor: '#E5E7EB' 
+//   },
+//   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+//   backText: { fontSize: 26, color: '#111827', marginTop: -2, fontFamily: 'System' },
+//   title: { fontSize: 18, fontWeight: '800', color: '#111827', fontFamily: 'System' },
+//   pill: { borderWidth: 1, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 },
+//   pillText: { fontSize: 12, fontWeight: '700', fontFamily: 'System' },
+
+//   card: { 
+//     backgroundColor: '#FFFFFF', 
+//     borderRadius: 12, 
+//     padding: 16, 
+//     borderWidth: 1, 
+//     borderColor: '#E5E7EB', 
+//     marginBottom: 12 
+//   },
+//   sectionTitle: { 
+//     fontWeight: '800', 
+//     fontSize: 16, 
+//     color: '#111827', 
+//     marginBottom: 12, 
+//     fontFamily: 'System' 
+//   },
+
+//   kvRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+//   kvLabel: { color: '#6B7280', fontSize: 14, fontFamily: 'System', flex: 1 },
+//   kvValue: { color: '#111827', fontWeight: '600', flex: 2, textAlign: 'right', fontFamily: 'System' },
+
+//   // Driver styles
+//   driverRow: { 
+//     flexDirection: 'row', 
+//     justifyContent: 'space-between', 
+//     alignItems: 'center', 
+//     paddingVertical: 8,
+//     borderBottomWidth: 1,
+//     borderBottomColor: '#F3F4F6'
+//   },
+//   driverInfo: { flex: 1 },
+//   driverName: { fontSize: 16, fontWeight: '600', color: '#111827', fontFamily: 'System' },
+//   driverType: { fontSize: 14, color: '#6B7280', fontFamily: 'System' },
+//   driverStatus: {},
+//   statusText: { fontSize: 12, fontWeight: '600', fontFamily: 'System' },
+
+//   // Contact styles
+//   contactRow: { marginBottom: 12 },
+//   contactType: { fontSize: 14, fontWeight: '600', color: '#374151', fontFamily: 'System' },
+//   contactName: { fontSize: 16, fontWeight: '700', color: '#111827', fontFamily: 'System' },
+//   contactPhone: { fontSize: 14, color: '#059669', fontFamily: 'System' },
+
+//   // Package styles
+//   packageContainer: { 
+//     backgroundColor: '#F9FAFB', 
+//     padding: 12, 
+//     borderRadius: 8, 
+//     marginBottom: 8,
+//     borderWidth: 1,
+//     borderColor: '#E5E7EB'
+//   },
+//   packageTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 8, fontFamily: 'System' },
+//   itemsContainer: { marginTop: 8 },
+//   itemsTitle: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 4, fontFamily: 'System' },
+//   itemRow: { marginLeft: 8, marginBottom: 4 },
+//   itemName: { fontSize: 14, fontWeight: '600', color: '#111827', fontFamily: 'System' },
+//   itemDesc: { fontSize: 13, color: '#6B7280', fontFamily: 'System' },
+//   itemValue: { fontSize: 13, color: '#059669', fontFamily: 'System' },
+
+//   // Image styles
+//   imageContainer: { marginTop: 8 },
+//   imageLabel: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 4, fontFamily: 'System' },
+//   imageScroll: { flexDirection: 'row' },
+//   vehicleImage: { width: 80, height: 80, borderRadius: 8, marginRight: 8 },
+//   packageImage: { width: 60, height: 60, borderRadius: 6, marginRight: 6 },
+
+//   // Record styles
+//   recordContainer: { 
+//     backgroundColor: '#F0FDF4', 
+//     padding: 12, 
+//     borderRadius: 8, 
+//     marginBottom: 8,
+//     borderWidth: 1,
+//     borderColor: '#BBF7D0'
+//   },
+//   recordType: { fontSize: 16, fontWeight: '700', color: '#059669', marginBottom: 4, fontFamily: 'System' },
+//   recordNote: { fontSize: 14, color: '#374151', marginBottom: 4, fontFamily: 'System' },
+//   recordDate: { fontSize: 12, color: '#6B7280', marginBottom: 8, fontFamily: 'System' },
+//   termsContainer: { marginTop: 8 },
+//   termsTitle: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 4, fontFamily: 'System' },
+//   termText: { fontSize: 13, color: '#6B7280', marginBottom: 2, fontFamily: 'System' },
+
+//   // Map styles
+//   mapBox: { position: 'relative', borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#E5E7EB' },
+//   mapOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none' },
+//   mapFab: { 
+//     position: 'absolute', 
+//     right: 12, 
+//     bottom: 12, 
+//     backgroundColor: '#059669', 
+//     paddingHorizontal: 16, 
+//     paddingVertical: 10, 
+//     borderRadius: 20, 
+//     shadowColor: '#000', 
+//     shadowOffset: { width: 0, height: 2 }, 
+//     shadowOpacity: 0.25, 
+//     shadowRadius: 3.84, 
+//     elevation: 5 
+//   },
+//   mapFabDisabled: { backgroundColor: '#9CA3AF', opacity: 0.6 },
+//   mapFabText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14, fontFamily: 'System' },
+//   mapFabTextDisabled: { color: '#D1D5DB', fontFamily: 'System' },
+//   centerFab: {
+//     position: 'absolute',
+//     right: 12,
+//     bottom: 84,
+//     width: 44,
+//     height: 44,
+//     borderRadius: 22,
+//     backgroundColor: '#FFFFFF',
+//     alignItems: 'center',
+//     justifyContent: 'center',
+//     shadowColor: '#000',
+//     shadowOffset: { width: 0, height: 2 },
+//     shadowOpacity: 0.12,
+//     shadowRadius: 3,
+//     elevation: 6,
+//     borderWidth: 1,
+//     borderColor: '#E5E7EB'
+//   },
+//   centerFabText: { fontSize: 18 },
+//   routeInfoBadge: { 
+//     position: 'absolute', 
+//     left: 12, 
+//     top: 12, 
+//     backgroundColor: 'rgba(59, 130, 246, 0.9)', 
+//     paddingHorizontal: 12, 
+//     paddingVertical: 6, 
+//     borderRadius: 16, 
+//     borderWidth: 1, 
+//     borderColor: '#3B82F6' 
+//   },
+//   routeInfoText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600', fontFamily: 'System' },
+
+//   // Start Modal styles
+//   startModalBackdrop: { 
+//     position: 'absolute', 
+//     top: 0, 
+//     left: 0, 
+//     right: 0, 
+//     bottom: 0, 
+//     backgroundColor: 'rgba(0,0,0,0.7)', 
+//     alignItems: 'center', 
+//     justifyContent: 'center', 
+//     padding: 24 
+//   },
+//   startModalCard: { 
+//     backgroundColor: '#FFFFFF', 
+//     width: '100%', 
+//     maxWidth: 420, 
+//     borderRadius: 24, 
+//     padding: 0, 
+//     borderWidth: 1, 
+//     borderColor: '#E5E7EB', 
+//     shadowColor: '#000', 
+//     shadowOffset: { width: 0, height: 10 }, 
+//     shadowOpacity: 0.25, 
+//     shadowRadius: 25, 
+//     elevation: 10 
+//   },
+//   startModalHeader: { 
+//     padding: 24, 
+//     paddingBottom: 16, 
+//     borderBottomWidth: 1, 
+//     borderBottomColor: '#F3F4F6' 
+//   },
+//   startModalTitle: { 
+//     fontSize: 22, 
+//     fontWeight: '800', 
+//     color: '#111827', 
+//     textAlign: 'center', 
+//     fontFamily: 'System' 
+//   },
+//   startModalSubtitle: { 
+//     fontSize: 14, 
+//     fontWeight: '600', 
+//     color: '#6B7280', 
+//     textAlign: 'center', 
+//     marginTop: 4, 
+//     fontFamily: 'System' 
+//   },
+//   startModalContent: { padding: 24, paddingTop: 16, paddingBottom: 16 },
+//   routeInfo: { alignItems: 'center' },
+//   routeStep: { flexDirection: 'row', alignItems: 'center', marginVertical: 6 },
+//   routeStepIcon: { 
+//     width: 36, 
+//     height: 36, 
+//     borderRadius: 18, 
+//     backgroundColor: '#F3F4F6', 
+//     alignItems: 'center', 
+//     justifyContent: 'center', 
+//     marginRight: 12 
+//   },
+//   routeStepEmoji: { fontSize: 16 },
+//   routeStepText: { fontSize: 14, fontWeight: '600', color: '#374151', flex: 1, fontFamily: 'System' },
+//   routeArrow: { marginVertical: 4 },
+//   routeArrowText: { fontSize: 18, color: '#9CA3AF', textAlign: 'center' },
+//   startingIndicator: { 
+//     flexDirection: 'row', 
+//     alignItems: 'center', 
+//     justifyContent: 'center', 
+//     marginTop: 16, 
+//     padding: 12, 
+//     backgroundColor: '#F0FDF4', 
+//     borderRadius: 12, 
+//     borderWidth: 1, 
+//     borderColor: '#BBF7D0' 
+//   },
+//   startingText: { marginLeft: 8, fontSize: 14, fontWeight: '600', color: '#059669', fontFamily: 'System' },
+//   startActionsRow: { 
+//     flexDirection: 'row', 
+//     gap: 12, 
+//     padding: 24, 
+//     paddingTop: 16, 
+//     borderTopWidth: 1, 
+//     borderTopColor: '#F3F4F6' 
+//   },
+//   startBtn: { 
+//     flex: 1, 
+//     paddingVertical: 16, 
+//     borderRadius: 16, 
+//     borderWidth: 2, 
+//     alignItems: 'center', 
+//     justifyContent: 'center', 
+//     shadowColor: '#000', 
+//     shadowOffset: { width: 0, height: 2 }, 
+//     shadowOpacity: 0.1, 
+//     shadowRadius: 4, 
+//     elevation: 3 
+//   },
+//   dangerBtn: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+//   dangerText: { color: '#DC2626', fontWeight: '800', fontSize: 15, fontFamily: 'System' },
+//   successBtn: { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
+//   successText: { color: '#059669', fontWeight: '800', fontSize: 15, fontFamily: 'System' },
+
+//   // Navigation styles
+//   navFullscreen: { 
+//     position: 'absolute', 
+//     top: 0, 
+//     left: 0, 
+//     right: 0, 
+//     bottom: 0, 
+//     backgroundColor: '#000',
+//     zIndex: 1000,
+//     elevation: 1000
+//   },
+//   phaseBadge: {
+//     position: 'absolute',
+//     top: 100,
+//     right: 16,
+//     backgroundColor: 'rgba(17, 24, 39, 0.95)',
+//     paddingHorizontal: 14,
+//     paddingVertical: 10,
+//     borderRadius: 22,
+//     borderWidth: 2,
+//     borderColor: '#10B981',
+//     shadowColor: '#000',
+//     shadowOffset: { width: 0, height: 3 },
+//     shadowOpacity: 0.4,
+//     shadowRadius: 6,
+//     elevation: 8,
+//     alignItems: 'center'
+//   },
+//   phaseBadgeText: {
+//     color: '#FFFFFF',
+//     fontSize: 13,
+//     fontWeight: '700',
+//     textAlign: 'center',
+//     fontFamily: 'System'
+//   },
+//   phaseBadgeSubtext: {
+//     color: '#10B981',
+//     fontSize: 11,
+//     fontWeight: '600',
+//     marginTop: 2,
+//     textAlign: 'center',
+//     fontFamily: 'System'
+//   },
+//   navActions: {
+//     position: 'absolute',
+//     left: 16,
+//     right: 16,
+//     bottom: 50,
+//     flexDirection: 'row',
+//     gap: 12
+//   },
+//   minimizeButton: {
+//     position: 'absolute',
+//     top: -48,
+//     right: 12,
+//     width: 40,
+//     height: 32,
+//     borderRadius: 8,
+//     backgroundColor: 'rgba(255,255,255,0.06)',
+//     alignItems: 'center',
+//     justifyContent: 'center',
+//     borderWidth: 1,
+//     borderColor: 'rgba(255,255,255,0.06)'
+//   },
+//   minimizeButtonText: { color: '#FFFFFF', fontSize: 18, fontWeight: '700' },
+
+//   /* Minimized panel styles */
+//   minimizedPanelContainer: {
+//     position: 'absolute',
+//     left: 12,
+//     right: 12,
+//     bottom: 18,
+//     zIndex: 1200,
+//     alignItems: 'center'
+//   },
+//   minimizedPanel: {
+//     width: '100%',
+//     backgroundColor: '#0B1020',
+//     borderRadius: 14,
+//     paddingVertical: 12,
+//     paddingHorizontal: 14,
+//     flexDirection: 'row',
+//     alignItems: 'center',
+//     justifyContent: 'space-between',
+//     shadowColor: '#000',
+//     shadowOffset: { width: 0, height: 6 },
+//     shadowOpacity: 0.35,
+//     shadowRadius: 12,
+//     elevation: 12,
+//     borderWidth: 1,
+//     borderColor: 'rgba(255,255,255,0.04)'
+//   },
+//   minimizedLeft: { flex: 1, paddingRight: 10 },
+//   minimizedTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+//   minimizedTitle: { color: '#ECFCCB', fontSize: 14, fontWeight: '800' },
+//   minimizedEta: { color: '#9CA3AF', fontSize: 12, marginLeft: 8 },
+//   minimizedMeta: { color: '#9CA3AF', fontSize: 12, marginTop: 4 },
+//   progressBarBackground: { height: 6, width: '100%', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 6, marginTop: 8 },
+//   progressBarFill: { height: 6, backgroundColor: '#34D399', borderRadius: 6 },
+//   minimizedActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+//   minimizedOpenBtn: { backgroundColor: '#10B981', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginRight: 8 },
+//   minimizedOpenText: { color: '#041022', fontWeight: '800' },
+//   viewRecordBtn: { backgroundColor: '#0EA5E9', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+//   viewRecordBtnText: { color: '#041022', fontWeight: '800' },
+//   minimizedHideBtn: { backgroundColor: '#0EA5E9', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, marginRight: 8 },
+//   minimizedHideText: { color: '#041022', fontWeight: '800' },
+//   minimizedStopBtn: { backgroundColor: '#EF4444', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
+//   minimizedStopText: { color: '#FFFFFF', fontWeight: '800' },
+//   /* Collapsed/hide tab */
+//   collapsedTabContainer: { position: 'absolute', right: 18, bottom: 18, zIndex: 1300 },
+//   collapsedTab: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.28, shadowRadius: 10, elevation: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)' },
+//   collapsedTabText: { fontSize: 18, color: '#041022', fontWeight: '800' },
+//   actionButton: {
+//     flex: 1,
+//     paddingVertical: 14,
+//     borderRadius: 16,
+//     alignItems: 'center',
+//     justifyContent: 'center',
+//     borderWidth: 2,
+//     shadowColor: '#000',
+//     shadowOffset: { width: 0, height: 2 },
+//     shadowOpacity: 0.1,
+//     shadowRadius: 4,
+//     elevation: 2
+//   },
+//   pickupButton: {
+//     backgroundColor: '#3B82F6',
+//     borderColor: '#60A5FA'
+//   },
+//   deliveryButton: {
+//     backgroundColor: '#10B981',
+//     borderColor: '#34D399'
+//   },
+//   stopButton: {
+//     backgroundColor: '#EF4444',
+//     borderColor: '#F87171'
+//   },
+//   actionButtonDisabled: {
+//     backgroundColor: '#E5E7EB',
+//     borderColor: '#D1D5DB'
+//   },
+//   actionButtonText: {
+//     color: '#FFFFFF',
+//     fontSize: 14,
+//     fontWeight: '800',
+//     fontFamily: 'System'
+//   },
+//   actionButtonTextDisabled: {
+//     color: '#9CA3AF',
+//     fontFamily: 'System'
+//   }
+
+//   // Instructions preview
+//   ,instructionsPreview: {
+//     marginTop: 12
+//   },
+//   instructionsPreviewBelowMap: {
+//     marginTop: 12,
+//     paddingTop: 8,
+//     borderTopWidth: 1,
+//     borderTopColor: '#F3F4F6'
+//   },
+//   instructionsTitle: {
+//     fontSize: 14,
+//     fontWeight: '800',
+//     color: '#111827',
+//     marginBottom: 8,
+//     fontFamily: 'System'
+//   },
+//   instructionsList: {
+//     maxHeight: 160
+//   },
+//   instructionsListSmall: {
+//     maxHeight: 140,
+//     backgroundColor: 'rgba(255,255,255,0.9)',
+//     borderRadius: 8,
+//     padding: 8,
+//     borderWidth: 1,
+//     borderColor: '#E5E7EB'
+//   },
+//   mapInstructionsOverlay: {
+//     position: 'absolute',
+//     left: 12,
+//     top: 12,
+//     zIndex: 1100,
+//     width: 220
+//   },
+//   instructionRowSmall: {
+//     flexDirection: 'row',
+//     alignItems: 'center',
+//     paddingVertical: 6,
+//     borderBottomWidth: 1,
+//     borderBottomColor: '#F3F4F6'
+//   },
+//   instructionTextSmall: {
+//     color: '#111827',
+//     fontSize: 13,
+//     fontWeight: '600',
+//     fontFamily: 'System'
+//   },
+//   instructionRow: {
+//     flexDirection: 'row',
+//     alignItems: 'flex-start',
+//     paddingVertical: 6,
+//     borderBottomWidth: 1,
+//     borderBottomColor: '#F3F4F6'
+//   },
+//   instructionIndex: {
+//     width: 24,
+//     color: '#6B7280',
+//     fontWeight: '700',
+//     fontFamily: 'System'
+//   },
+//   instructionTextWrap: {
+//     flex: 1
+//   },
+//   instructionText: {
+//     color: '#111827',
+//     fontSize: 13,
+//     fontWeight: '600',
+//     fontFamily: 'System'
+//   },
+//   instructionMeta: {
+//     color: '#6B7280',
+//     fontSize: 12,
+//     marginTop: 4,
+//     fontFamily: 'System'
+//   },
+//   noInstructionsText: {
+//     color: '#9CA3AF',
+//     fontSize: 13,
+//     textAlign: 'center'
+//   }
+//   ,instructionsPanel: {
+//     position: 'absolute',
+//     left: 12,
+//     right: 12,
+//     bottom: 140,
+//     maxHeight: 180,
+//     backgroundColor: 'rgba(255,255,255,0.98)',
+//     borderRadius: 12,
+//     padding: 8,
+//     borderWidth: 1,
+//     borderColor: '#E5E7EB'
+//   },
+//   instructionsPanelList: {
+//     maxHeight: 160
+//   },
+//   instructionRowNav: {
+//     flexDirection: 'row',
+//     alignItems: 'flex-start',
+//     paddingVertical: 6,
+//     borderBottomWidth: 1,
+//     borderBottomColor: '#F3F4F6'
+//   },
+//   instructionIndexNav: {
+//     width: 28,
+//     color: '#6B7280',
+//     fontWeight: '700',
+//     fontFamily: 'System'
+//   },
+//   instructionTextWrapNav: {
+//     flex: 1
+//   },
+//   instructionTextNav: {
+//     color: '#111827',
+//     fontSize: 13,
+//     fontWeight: '600',
+//     fontFamily: 'System'
+//   },
+//   instructionMetaNav: {
+//     color: '#6B7280',
+//     fontSize: 12,
+//     marginTop: 4,
+//     fontFamily: 'System'
+//   }
+//   ,
+//   /* Dark instructions panel for navigation fullscreen */
+//   instructionsPanelDark: {
+//     position: 'absolute',
+//     left: 0,
+//     right: 0,
+//     bottom: 100,
+//     maxHeight: 260,
+//     backgroundColor: 'rgba(8,10,15,0.92)',
+//     borderTopLeftRadius: 18,
+//     borderTopRightRadius: 18,
+//     paddingHorizontal: 12,
+//     paddingTop: 10,
+//     paddingBottom: 12,
+//     borderWidth: 1,
+//     borderColor: 'rgba(255,255,255,0.04)'
+//   },
+//   instructionsHeader: {
+//     flexDirection: 'row',
+//     justifyContent: 'space-between',
+//     alignItems: 'center',
+//     paddingBottom: 8,
+//     borderBottomWidth: 1,
+//     borderBottomColor: 'rgba(255,255,255,0.04)'
+//   },
+//   instructionsHeaderTitle: { color: '#ECFCCB', fontSize: 16, fontWeight: '800', fontFamily: 'System' },
+//   instructionsHeaderSub: { color: '#9CA3AF', fontSize: 12, marginTop: 2, fontFamily: 'System' },
+//   instructionsHeaderBadge: { backgroundColor: '#0EA5E9', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
+//   instructionsHeaderBadgeText: { color: '#041022', fontWeight: '800', fontSize: 12 },
+//   instructionsPanelListDark: { maxHeight: 180, marginTop: 8 },
+//   instructionRowDark: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.03)' },
+//   instructionIconWrap: { width: 40, alignItems: 'center', justifyContent: 'center' },
+//   instructionIcon: { color: '#34D399', fontSize: 18 },
+//   instructionTextWrapDark: { flex: 1 },
+//   instructionTextDark: { color: '#F9FAFB', fontSize: 14, fontWeight: '700', fontFamily: 'System' },
+//   instructionMetaDark: { color: '#9CA3AF', fontSize: 12, marginTop: 4, fontFamily: 'System' },
+//   noInstructionsTextDark: { color: '#9CA3AF', fontSize: 13, textAlign: 'center', paddingVertical: 12 }
+//   ,deliveryModalBackdrop: {
+//     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 1400
+//   },
+//   deliveryModalCard: { width: '92%', maxWidth: 920, maxHeight: '86%', backgroundColor: '#FFFFFF', borderRadius: 14, overflow: 'hidden' },
+//   govHeader: { fontSize: 12, color: '#6B7280', fontWeight: '800' },
+//   govSubHeader: { fontSize: 12, color: '#6B7280', marginTop: 4, fontWeight: '600' },
+//   modalTitle: { fontSize: 18, fontWeight: '900', marginTop: 8, marginBottom: 6 },
+//   modalSmall: { color: '#6B7280', fontSize: 12 },
+//   modalSection: { marginTop: 12 },
+//   modalSectionTitle: { fontSize: 13, fontWeight: '800', color: '#111827', marginBottom: 6 },
+//   modalText: { color: '#374151', fontSize: 13 },
+//   modalTextBold: { color: '#111827', fontSize: 13, fontWeight: '800' },
+//   deliveryModalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, padding: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+//   modalPdfBtn: { backgroundColor: '#0EA5E9', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+//   modalPdfText: { color: '#041022', fontWeight: '800' },
+//   modalSignBtn: { backgroundColor: '#10B981', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+//   modalSignText: { color: '#041022', fontWeight: '800' },
+//   modalCloseBtn: { backgroundColor: '#E5E7EB', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, marginLeft: 8 },
+//   modalCloseText: { color: '#374151', fontWeight: '800' },
+//   /* Document / biên bản styles */
+//   docHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
+//   docHeaderLeft: { flex: 1, alignItems: 'flex-start' },
+//   docHeaderRight: { flex: 1, alignItems: 'flex-end' },
+//   companyName: { fontSize: 13, fontWeight: '900', color: '#111827' },
+//   docTitleWrap: { alignItems: 'center', marginTop: 6, marginBottom: 6 },
+//   docNumber: { fontSize: 13, color: '#6B7280' },
+//   docDate: { fontSize: 13, color: '#6B7280', marginTop: 4 },
+//   docMainTitle: { fontSize: 20, fontWeight: '900', textAlign: 'center', marginTop: 6, marginBottom: 8 },
+//   partiesRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+//   partyBox: { flex: 1, borderWidth: 1, borderColor: '#E5E7EB', padding: 10, borderRadius: 8, marginHorizontal: 6, backgroundColor: '#FAFAFA' },
+//   partyTitle: { fontSize: 13, fontWeight: '900', marginBottom: 8 },
+//   fieldRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+//   fieldLabel: { width: 120, color: '#374151', fontWeight: '700' },
+//   fieldDotted: { flex: 1, borderBottomWidth: 1, borderStyle: 'dotted', borderBottomColor: '#D1D5DB', paddingVertical: 6, color: '#6B7280' },
+//   tableHeaderRow: { flexDirection: 'row', backgroundColor: '#F3F4F6', paddingVertical: 8, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#E5E7EB' },
+//   tableRow: { flexDirection: 'row', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+//   tableCell: { fontSize: 13, paddingHorizontal: 6, color: '#111827' },
+//   colStt: { width: 36, textAlign: 'center', fontWeight: '700' },
+//   colName: { flex: 2 },
+//   colSpec: { flex: 2 },
+//   colUnit: { width: 56, textAlign: 'center' },
+//   colQty: { width: 64, textAlign: 'center' },
+//   colNote: { flex: 1 },
+//   signatureRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 18, paddingHorizontal: 6 },
+//   signatureBox: { flex: 1, alignItems: 'center', padding: 8 },
+//   signatureTitle: { fontWeight: '900', fontSize: 13 },
+//   signatureSub: { fontSize: 12, color: '#6B7280', marginTop: 4 },
+//   signatureSpace: { height: 56, width: '80%', borderBottomWidth: 1, borderStyle: 'dotted', borderBottomColor: '#9CA3AF', marginTop: 12 },
+//   signatureName: { marginTop: 8, fontWeight: '700' },
+//   /* Paper / A4 styles */
+//   paperRoot: { backgroundColor: '#F3F4F6', padding: 18, alignItems: 'center' },
+//   paperHeaderRow: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+//   paperMetaRow: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+//   smallMuted: { color: '#6B7280', fontSize: 12 },
+//   paperIntro: { width: '100%', marginTop: 6 },
+//   partiesRowPaper: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
+//   partyBoxPaper: { flex: 1, padding: 12, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, backgroundColor: '#FFFFFF', marginHorizontal: 6 },
+//   partyLine: { marginTop: 6, color: '#374151' },
+//   paperFooter: { marginTop: 12 },
+//   packageImageThumb: { width: 48, height: 48, borderRadius: 6, backgroundColor: '#F3F4F6' },
+//   termsBlock: { marginTop: 12 },
+//   signatureRowPaper: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 },
+//   signatureBoxPaper: { flex: 1, alignItems: 'center' },
+//   itemDetailsRow: { width: '100%', flexDirection: 'row', marginTop: 8, alignItems: 'flex-start' },
+//   itemImagesRow: { flexDirection: 'row' },
+//   itemImageLarge: { width: 84, height: 84, borderRadius: 8, marginRight: 8, backgroundColor: '#F3F4F6' },
+//   itemDetailsTextCol: { flex: 1 },
+//   itemTitleLarge: { fontSize: 14, fontWeight: '800', color: '#111827' },
+//   itemMeta: { fontSize: 12, color: '#6B7280', marginTop: 4 }
+//   ,toastContainer: {
+//     position: 'absolute',
+//     top: 14,
+//     left: 24,
+//     right: 24,
+//     alignItems: 'center',
+//     zIndex: 9999
+//   },
+//   toastText: {
+//     backgroundColor: 'rgba(17,24,39,0.95)',
+//     color: '#FFFFFF',
+//     paddingHorizontal: 14,
+//     paddingVertical: 10,
+//     borderRadius: 12,
+//     fontWeight: '800',
+//     fontSize: 13
+//   }
+//   ,signatureStatusRow: { width: '100%', marginTop: 12, alignItems: 'flex-start' },
+//   signatureHint: { fontSize: 13, fontWeight: '800', color: '#111827', marginBottom: 8 },
+//   signatureStatusBadges: { flexDirection: 'row', gap: 8 },
+//   signatureStatusBadge: { backgroundColor: '#F3F4F6', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, marginRight: 8 },
+//   signatureStatusBadgeText: { fontSize: 12, color: '#374151', fontWeight: '700' }
+// })
+
+// export default DriverTripDetailScreenV2

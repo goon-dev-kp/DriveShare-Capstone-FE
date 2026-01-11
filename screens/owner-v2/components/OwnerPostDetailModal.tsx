@@ -1,0 +1,1043 @@
+import React, { useEffect, useState } from 'react'
+import {
+  Modal, View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, ScrollView, Image, Linking, Alert
+} from 'react-native'
+import { Ionicons, MaterialCommunityIcons, FontAwesome5, Feather } from '@expo/vector-icons'
+import postPackageService from '@/services/postPackageService'
+import api from '@/config/api'
+
+interface Props {
+  visible: boolean
+  postId?: string | null
+  onClose: () => void
+  onAccept?: (postId: string, vehicleId: string) => void
+  onRefresh?: () => void
+}
+
+const COLORS = {
+  primary: '#0284C7',
+  bg: '#F3F4F6',
+  white: '#FFFFFF',
+  text: '#1F2937',
+  textLight: '#6B7280',
+  border: '#E5E7EB',
+  success: '#10B981',
+  warning: '#F59E0B',
+  danger: '#EF4444',
+  blue: '#3B82F6',
+  senderBg: '#EFF6FF',
+  receiverBg: '#FFF7ED',
+  purple: '#7C3AED',
+  driverBg: '#F0FDF4' // Màu nền nhẹ cho card tài xế
+}
+
+const OwnerPostDetailModal: React.FC<Props> = ({ visible, postId, onClose, onAccept, onRefresh }) => {
+  const [loading, setLoading] = useState(false)
+  const [data, setData] = useState<any>(null)
+  const [accepting, setAccepting] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [aiAnalysis, setAiAnalysis] = useState<any>(null)
+  const [showAiResult, setShowAiResult] = useState(false)
+
+  useEffect(() => {
+    if (visible && postId) {
+      fetchDetails()
+      setAiAnalysis(null)
+      setShowAiResult(false)
+    }
+    else setData(null)
+  }, [visible, postId])
+
+  const fetchDetails = async () => {
+    setLoading(true)
+    try {
+      const res: any = await postPackageService.getPostPackageDetails(postId!)
+      // Lấy dữ liệu từ result
+      setData(res?.result ?? res?.data ?? res)
+    } catch (e) {
+      console.warn('Fetch detail error', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const formatDate = (dateString: string) => {
+    if (!dateString) return '---'
+    try {
+      return new Date(dateString).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    } catch { return '---' }
+  }
+
+  const formatCurrency = (val: number) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val)
+
+  const handleCall = (phone: string) => {
+    if (phone) Linking.openURL(`tel:${phone}`)
+  }
+
+  const handleAccept = async () => {
+    if (!postId || !onAccept) return
+    
+    // Gọi callback để parent component xử lý (hiển thị modal chọn xe)
+    onAccept(postId, '')
+  }
+
+  const handleAnalyze = async () => {
+    if (!postId) return
+    
+    setAnalyzing(true)
+    try {
+      const response = await api.post(
+        `/api/PostAnalysis/analyze-post-package/${postId}`
+      )
+      
+      if (response.data && response.data.isSuccess) {
+        setAiAnalysis(response.data.result)
+        setShowAiResult(true)
+      } else {
+        Alert.alert('Thông báo', response.data?.message || 'Không thể phân tích đơn hàng')
+      }
+    } catch (e: any) {
+      console.error('AI Analysis Error:', e)
+      Alert.alert('Lỗi', e?.response?.data?.message || 'Có lỗi xảy ra khi phân tích AI')
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  const renderScenario = (label: string, scenarioData: any) => {
+    if (!scenarioData) return null
+    const isPossible = scenarioData.isPossible
+    return (
+      <View style={[styles.scenarioBox, isPossible ? styles.scenarioOk : styles.scenarioFail]}>
+        <View style={{flexDirection:'row', justifyContent:'space-between'}}>
+            <Text style={styles.scenarioLabel}>{label}</Text>
+            {isPossible ? <Ionicons name="checkmark-circle" size={16} color={COLORS.success} /> : <Ionicons name="close-circle" size={16} color={COLORS.danger} />}
+        </View>
+        <Text style={styles.scenarioMsg}>{scenarioData.message}</Text>
+        <Text style={styles.scenarioTime}>⏱ {scenarioData.totalElapsedHours}h • {scenarioData.drivingHoursPerDriver}h/tài</Text>
+      </View>
+    )
+  }
+
+  const renderAIAnalysis = () => {
+    if (!aiAnalysis) return null
+
+    const getScoreColor = (score: number) => {
+      if (score >= 8) return COLORS.success
+      if (score >= 6) return COLORS.warning
+      return COLORS.danger
+    }
+
+    const getVerdictStyle = (verdict: string) => {
+      if (verdict?.includes('THƠM') || verdict?.includes('TỐT')) return { bg: '#ECFDF5', color: COLORS.success }
+      if (verdict?.includes('CẨN TRỌNG')) return { bg: '#FEF2F2', color: COLORS.danger }
+      return { bg: '#FFF7ED', color: COLORS.warning }
+    }
+
+    const verdictStyle = getVerdictStyle(aiAnalysis.verdict)
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.aiHeader}>
+          <MaterialCommunityIcons name="robot" size={24} color={COLORS.purple} />
+          <Text style={styles.aiHeaderTitle}>Phân Tích AI</Text>
+        </View>
+
+        {/* Score & Verdict */}
+        <View style={styles.scoreContainer}>
+          <View style={styles.scoreCircle}>
+            <Text style={[styles.scoreValue, { color: getScoreColor(aiAnalysis.score) }]}>
+              {aiAnalysis.score.toFixed(1)}
+            </Text>
+            <Text style={styles.scoreMax}>/10</Text>
+          </View>
+          <View style={{ flex: 1, marginLeft: 16 }}>
+            <View style={[styles.verdictBadge, { backgroundColor: verdictStyle.bg }]}>
+              <Text style={[styles.verdictText, { color: verdictStyle.color }]}>{aiAnalysis.verdict}</Text>
+            </View>
+            {aiAnalysis.shortSummary && (
+              <Text style={styles.shortSummary}>{aiAnalysis.shortSummary}</Text>
+            )}
+          </View>
+        </View>
+
+        {/* Financial Analysis */}
+        {aiAnalysis.financial && (
+          <View style={styles.analysisSection}>
+            <View style={styles.sectionHeader}>
+              <MaterialCommunityIcons name="cash-multiple" size={18} color={COLORS.success} />
+              <Text style={styles.sectionHeaderText}>Phân Tích Tài Chính</Text>
+            </View>
+            <View style={styles.financialGrid}>
+              <View style={styles.financialItem}>
+                <Text style={styles.financialLabel}>Đánh giá</Text>
+                <Text style={styles.financialValue}>{aiAnalysis.financial.assessment}</Text>
+              </View>
+              <View style={styles.financialItem}>
+                <Text style={styles.financialLabel}>Dự kiến thu nhập</Text>
+                <Text style={styles.financialValue}>{aiAnalysis.financial.estimatedRevenue}</Text>
+              </View>
+              <View style={styles.financialItem}>
+                <Text style={styles.financialLabel}>Xu hướng thị trường</Text>
+                <Text style={styles.financialValue}>{aiAnalysis.financial.marketTrend}</Text>
+              </View>
+              <View style={styles.financialItem}>
+                <Text style={styles.financialLabel}>Điểm lợi nhuận</Text>
+                <Text style={[styles.financialValue, { color: getScoreColor(aiAnalysis.financial.profitabilityScore) }]}>
+                  {aiAnalysis.financial.profitabilityScore}/10
+                </Text>
+              </View>
+            </View>
+            {aiAnalysis.financial.details && (
+              <Text style={styles.detailsText}>{aiAnalysis.financial.details}</Text>
+            )}
+          </View>
+        )}
+
+        {/* Operational Analysis */}
+        {aiAnalysis.operational && (
+          <View style={styles.analysisSection}>
+            <View style={styles.sectionHeader}>
+              <MaterialCommunityIcons name="truck-fast" size={18} color={COLORS.primary} />
+              <Text style={styles.sectionHeaderText}>Phân Tích Vận Hành</Text>
+            </View>
+            <View style={styles.operationalList}>
+              {aiAnalysis.operational.vehicleRecommendation && (
+                <View style={styles.operationalItem}>
+                  <Text style={styles.operationalLabel}>🚗 Xe đề xuất:</Text>
+                  <Text style={styles.operationalValue}>{aiAnalysis.operational.vehicleRecommendation}</Text>
+                </View>
+              )}
+              {aiAnalysis.operational.routeDifficulty && (
+                <View style={styles.operationalItem}>
+                  <Text style={styles.operationalLabel}>🛣️ Độ khó tuyến đường:</Text>
+                  <Text style={styles.operationalValue}>{aiAnalysis.operational.routeDifficulty}</Text>
+                </View>
+              )}
+              {aiAnalysis.operational.urgencyLevel && (
+                <View style={styles.operationalItem}>
+                  <Text style={styles.operationalLabel}>⏰ Mức độ gấp:</Text>
+                  <Text style={styles.operationalValue}>{aiAnalysis.operational.urgencyLevel}</Text>
+                </View>
+              )}
+              {aiAnalysis.operational.cargoNotes && (
+                <View style={styles.operationalItem}>
+                  <Text style={styles.operationalLabel}>📦 Ghi chú hàng hóa:</Text>
+                  <Text style={styles.operationalValue}>{aiAnalysis.operational.cargoNotes}</Text>
+                </View>
+              )}
+              {aiAnalysis.operational.routeNotes && (
+                <View style={styles.operationalItem}>
+                  <Text style={styles.operationalLabel}>🗺️ Ghi chú lộ trình:</Text>
+                  <Text style={styles.operationalValue}>{aiAnalysis.operational.routeNotes}</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* Recommended Actions */}
+        {aiAnalysis.recommendedActions && aiAnalysis.recommendedActions.length > 0 && (
+          <View style={styles.analysisSection}>
+            <View style={styles.sectionHeader}>
+              <Feather name="list" size={18} color={COLORS.purple} />
+              <Text style={styles.sectionHeaderText}>Hành Động Đề Xuất</Text>
+            </View>
+            {aiAnalysis.recommendedActions.map((action: string, index: number) => (
+              <View key={index} style={styles.actionItem}>
+                <Text style={styles.actionBullet}>•</Text>
+                <Text style={styles.actionText}>{action}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Risk Warning */}
+        {aiAnalysis.riskWarning && (
+          <View style={styles.riskWarning}>
+            <Ionicons name="warning" size={18} color={COLORS.danger} />
+            <Text style={styles.riskWarningText}>{aiAnalysis.riskWarning}</Text>
+          </View>
+        )}
+      </View>
+    )
+  }
+
+  const renderContent = () => {
+    if (loading) return <View style={styles.centerBox}><ActivityIndicator size="large" color={COLORS.primary} /><Text style={{marginTop: 8, color: COLORS.textLight}}>Đang tải dữ liệu...</Text></View>
+    if (!data) return <View style={styles.centerBox}><Text style={styles.emptyText}>Không tải được dữ liệu.</Text></View>
+
+    // Truy cập dữ liệu từ response structure mới
+    const route = data.shippingRoute || {}
+    const provider = data.provider
+    const suggest = data.driverSuggestion
+    const sender = data.postContacts?.find((c: any) => c.type === 'SENDER')
+    const receiver = data.postContacts?.find((c: any) => c.type === 'RECEIVER')
+    const myDrivers = data.myDrivers || [] // Lấy danh sách tài xế
+
+    return (
+      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+        
+        {/* --- 1. HEADER & PRICE --- */}
+        <View style={styles.card}>
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.postTitle}>{data.title}</Text>
+              <Text style={styles.postDate}>{formatDate(data.created)}</Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: data.status === 'OPEN' ? '#DBEAFE' : '#ECFDF5' }]}>
+              <Text style={[styles.statusText, { color: data.status === 'OPEN' ? COLORS.blue : COLORS.success }]}>{data.status}</Text>
+            </View>
+          </View>
+          
+          {/* AI Analyze Button */}
+          <TouchableOpacity 
+            style={styles.analyzeBtn} 
+            onPress={handleAnalyze}
+            disabled={analyzing}
+          >
+            {analyzing ? (
+              <ActivityIndicator size="small" color={COLORS.purple} />
+            ) : (
+              <>
+                <MaterialCommunityIcons name="robot" size={18} color={COLORS.purple} />
+                <Text style={styles.analyzeBtnText}>Phân tích AI</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          
+          <View style={styles.divider} />
+          
+          <View style={{flexDirection: 'row', justifyContent:'space-between', alignItems:'flex-end'}}>
+            <View>
+                <Text style={styles.priceLabel}>Giá đề xuất</Text>
+                <Text style={styles.priceValue}>{formatCurrency(data.offeredPrice)}</Text>
+            </View>
+            {provider && (
+                <View style={{alignItems:'flex-end'}}>
+                    <Text style={styles.priceLabel}>Đơn vị vận chuyển</Text>
+                    <Text style={{fontWeight:'700', color: COLORS.text}}>{provider.fullName}</Text>
+                </View>
+            )}
+          </View>
+
+          {data.description ? <View style={styles.descBox}><Text style={styles.desc}>{data.description}</Text></View> : null}
+        </View>
+
+        {/* --- AI ANALYSIS RESULT --- */}
+        {showAiResult && renderAIAnalysis()}
+
+        {/* --- 3. LỘ TRÌNH & PHÂN TÍCH --- */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>📍 Lộ Trình & Phân Tích</Text>
+          
+          <View style={styles.routeContainer}>
+            {/* Start */}
+            <View style={styles.routeRow}>
+              <MaterialCommunityIcons name="circle-slice-8" size={20} color={COLORS.primary} />
+              <View style={styles.routeContent}>
+                <Text style={styles.routeLabel}>Điểm đi ({formatDate(route.expectedPickupDate)})</Text>
+                <Text style={styles.routeAddress}>{route.startLocation?.address}</Text>
+                {route.pickupTimeWindow?.startTime && route.pickupTimeWindow?.endTime && (
+                  <Text style={styles.timeWindowText}>
+                    ⏰ Khoảng thời gian: {route.pickupTimeWindow.startTime} - {route.pickupTimeWindow.endTime}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.routeLine} />
+
+            {/* End */}
+            <View style={styles.routeRow}>
+              <MaterialCommunityIcons name="map-marker" size={20} color={COLORS.danger} />
+              <View style={styles.routeContent}>
+                <Text style={styles.routeLabel}>Điểm đến ({formatDate(route.expectedDeliveryDate)})</Text>
+                <Text style={styles.routeAddress}>{route.endLocation?.address}</Text>
+                {route.deliveryTimeWindow?.startTime && route.deliveryTimeWindow?.endTime && (
+                  <Text style={styles.timeWindowText}>
+                    ⏰ Khoảng thời gian: {route.deliveryTimeWindow.startTime} - {route.deliveryTimeWindow.endTime}
+                  </Text>
+                )}
+              </View>
+            </View>
+          </View>
+
+          {suggest && (
+             <View style={styles.aiContainer}>
+                <View style={{flexDirection:'row', alignItems:'center', marginBottom: 8}}>
+                    <MaterialCommunityIcons name="robot-outline" size={20} color={COLORS.purple} />
+                    <Text style={styles.aiTitle}>Phân tích hành trình</Text>
+                </View>
+                
+                {/* Distance & Duration Info */}
+                <View style={styles.tripInfoBox}>
+                  <View style={styles.tripInfoItem}>
+                    <MaterialCommunityIcons name="map-marker-distance" size={18} color={COLORS.primary} />
+                    <Text style={styles.tripInfoLabel}>Khoảng cách:</Text>
+                    <Text style={styles.tripInfoValue}>{suggest.distanceKm} km</Text>
+                  </View>
+                  <View style={styles.tripInfoItem}>
+                    <MaterialCommunityIcons name="clock-outline" size={18} color={COLORS.primary} />
+                    <Text style={styles.tripInfoLabel}>Ước tính:</Text>
+                    <Text style={styles.tripInfoValue}>{suggest.estimatedDurationHours} giờ</Text>
+                  </View>
+                </View>
+
+                {/* System Recommendation */}
+                <View style={styles.recommendBox}>
+                  <MaterialCommunityIcons name="lightbulb-on" size={16} color={COLORS.warning} />
+                  <Text style={styles.recommendLabel}>Đề xuất hệ thống:</Text>
+                  <Text style={styles.recommendValue}>{suggest.systemRecommendation === 'SOLO' ? '1 Tài xế' : suggest.systemRecommendation === 'TEAM' ? '2 Tài xế' : '3 Tài xế (Express)'}</Text>
+                </View>
+
+                {/* Required Hours */}
+                <View style={styles.quotaBox}>
+                  <Text style={styles.quotaText}>💼 Giờ lái yêu cầu: <Text style={styles.quotaBold}>{suggest.requiredHoursFromQuota} giờ</Text></Text>
+                </View>
+                
+                <View style={styles.scenarioGrid}>
+                    {renderScenario("1 Tài xế (Solo)", suggest.soloScenario)}
+                    {renderScenario("2 Tài xế (Team)", suggest.teamScenario)}
+                    {renderScenario("3 Tài xế (Express)", suggest.expressScenario)}
+                </View>
+             </View>
+          )}
+        </View>
+
+        {/* --- 2. TÀI XẾ THỰC HIỆN (MY DRIVERS) - MỚI THÊM --- */}
+        {myDrivers.length > 0 && (
+          <View style={styles.card}>
+             <View style={styles.cardHeader}>
+                
+                <Text style={styles.sectionTitle}>Đội Ngũ Tài Xế Hiện Tại ({myDrivers.length})</Text>
+             </View>
+
+             {myDrivers.map((driver: any, index: number) => (
+               <View key={index} style={[styles.driverCard, index < myDrivers.length - 1 && {marginBottom: 10}]}>
+                  {/* Avatar Area */}
+                  <View style={styles.avatarContainer}>
+                     {driver.avatarUrl ? (
+                        <Image source={{ uri: driver.avatarUrl }} style={styles.avatarImg} />
+                     ) : (
+                        <View style={[styles.avatarImg, { backgroundColor: '#E0E7FF', alignItems:'center', justifyContent:'center' }]}>
+                           <Text style={{color: '#4F46E5', fontWeight:'700', fontSize: 16}}>{driver.fullName?.charAt(0)}</Text>
+                        </View>
+                     )}
+                     {/* Online/Offline Dot */}
+                     <View style={[styles.statusDot, { backgroundColor: driver.isAvailable ? COLORS.success : COLORS.textLight }]} />
+                  </View>
+
+                  {/* Info Area */}
+                  <View style={{ flex: 1, paddingHorizontal: 12 }}>
+                     <Text style={styles.driverName}>{driver.fullName}</Text>
+                     <View style={{flexDirection:'row', alignItems:'center', marginBottom: 4}}>
+                        <Text style={[styles.driverStatusText, { color: driver.isAvailable ? COLORS.success : COLORS.textLight }]}>
+                           ● {driver.statusMessage || (driver.isAvailable ? 'Sẵn sàng' : 'Không sẵn sàng')}
+                        </Text>
+                     </View>
+                     {/* Stats */}
+                     <View style={styles.statsBadge}>
+                        <MaterialCommunityIcons name="clock-time-four-outline" size={12} color={COLORS.textLight} style={{marginRight:4}}/>
+                        <Text style={styles.statsText}>{driver.stats}</Text>
+                     </View>
+                  </View>
+
+                  {/* Call Button */}
+                  <TouchableOpacity onPress={() => handleCall(driver.phoneNumber)} style={styles.callBtnCircle}>
+                     <Ionicons name="call" size={18} color={COLORS.white} />
+                  </TouchableOpacity>
+               </View>
+             ))}
+          </View>
+        )}
+
+        {/* --- 4. GÓI HÀNG --- */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Feather name="package" size={20} color={COLORS.text} />
+            <Text style={styles.sectionTitle}>Thông Tin Hàng Hóa</Text>
+          </View>
+
+          {(data.packages || []).map((pkg: any, index: number) => {
+             // Lấy ảnh từ packageImages và item.imageUrls
+             const packageImages = (pkg.packageImages || []).map((img: any) => ({ imageUrl: img.imageUrl }));
+             const itemImages = (pkg.item?.imageUrls || []).map((img: any) => ({ imageUrl: img.imageUrl }));
+             const allImages = [...packageImages, ...itemImages];
+             
+             return (
+                <View key={index} style={styles.packageItem}>
+                <View style={styles.pkgHeader}>
+                    <Text style={styles.pkgTitle}>{pkg.title}</Text>
+                    <Text style={styles.pkgCode}>{pkg.packageCode}</Text>
+                </View>
+                
+                <View style={styles.specRow}>
+                    <Text style={styles.specText}>⚖️ {pkg.weightKg} kg</Text>
+                    <Text style={styles.specText}>📦 {pkg.volumeM3} m³</Text>
+                    <Text style={styles.specText}>🏷️ {pkg.status}</Text>
+                </View>
+
+                {/* Package Special Properties */}
+                <View style={styles.specialPropsContainer}>
+                  {pkg.isFragile && (
+                    <View style={[styles.propBadge, {backgroundColor: '#FEF3C7', borderColor: '#F59E0B'}]}>
+                      <Text style={[styles.propText, {color: '#D97706'}]}>👌 Dễ vỡ</Text>
+                    </View>
+                  )}
+                  {pkg.isLiquid && (
+                    <View style={[styles.propBadge, {backgroundColor: '#DBEAFE', borderColor: '#3B82F6'}]}>
+                      <Text style={[styles.propText, {color: '#2563EB'}]}>💧 Chất lỏng</Text>
+                    </View>
+                  )}
+                  {pkg.isRefrigerated && (
+                    <View style={[styles.propBadge, {backgroundColor: '#DBEAFE', borderColor: '#0EA5E9'}]}>
+                      <Text style={[styles.propText, {color: '#0284C7'}]}>❄️ Cần lạnh</Text>
+                    </View>
+                  )}
+                  {pkg.isFlammable && (
+                    <View style={[styles.propBadge, {backgroundColor: '#FED7AA', borderColor: '#F97316'}]}>
+                      <Text style={[styles.propText, {color: '#EA580C'}]}>🔥 Dễ cháy</Text>
+                    </View>
+                  )}
+                  {pkg.isHazardous && (
+                    <View style={[styles.propBadge, {backgroundColor: '#FECACA', borderColor: '#EF4444'}]}>
+                      <Text style={[styles.propText, {color: '#DC2626'}]}>⚠️ Nguy hiểm</Text>
+                    </View>
+                  )}
+                  {pkg.isBulky && (
+                    <View style={[styles.propBadge, {backgroundColor: '#E9D5FF', borderColor: '#A855F7'}]}>
+                      <Text style={[styles.propText, {color: '#9333EA'}]}>📦 Cồng kềnh</Text>
+                    </View>
+                  )}
+                  {pkg.isPerishable && (
+                    <View style={[styles.propBadge, {backgroundColor: '#BBF7D0', borderColor: '#22C55E'}]}>
+                      <Text style={[styles.propText, {color: '#16A34A'}]}>⏳ Dễ hỏng</Text>
+                    </View>
+                  )}
+                </View>
+
+                {pkg.item && (
+                    <View style={styles.itemMeta}>
+                        <Text style={styles.itemName}>{pkg.item.itemName}</Text>
+                        <Text style={styles.itemDesc}>{pkg.item.description}</Text>
+                        <Text style={styles.itemVal}>Giá trị: {formatCurrency(pkg.item.declaredValue)}</Text>
+                    </View>
+                )}
+
+                {allImages.length > 0 && (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginTop: 8}}>
+                        {allImages.map((img: any, i: number) => (
+                            <Image key={i} source={{ uri: img.imageUrl }} style={styles.galleryImg} />
+                        ))}
+                    </ScrollView>
+                )}
+                </View>
+             )
+          })}
+        </View>
+
+        {/* --- 5. LIÊN HỆ --- */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>📞 Danh Bạ Liên Hệ</Text>
+          
+          {sender && (
+            <View style={[styles.contactRow, { backgroundColor: COLORS.senderBg }]}>
+              <View style={styles.roleBox}><Text style={[styles.roleText, {color: COLORS.primary}]}>GỬI</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.contactName}>{sender.fullName}</Text>
+                <Text style={styles.contactPhone}>{sender.phoneNumber}</Text>
+                {sender.email && <Text style={styles.contactEmail}>{sender.email}</Text>}
+              </View>
+              <TouchableOpacity onPress={() => handleCall(sender.phoneNumber)} style={styles.miniCallBtn}>
+                  <Ionicons name="call-outline" size={16} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {receiver && (
+            <View style={[styles.contactRow, { backgroundColor: COLORS.receiverBg, marginTop: 8 }]}>
+               <View style={[styles.roleBox, {borderColor: '#F97316'}]}><Text style={[styles.roleText, {color: '#F97316'}]}>NHẬN</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.contactName}>{receiver.fullName}</Text>
+                <Text style={styles.contactPhone}>{receiver.phoneNumber}</Text>
+                {receiver.email && <Text style={styles.contactEmail}>{receiver.email}</Text>}
+              </View>
+              <TouchableOpacity onPress={() => handleCall(receiver.phoneNumber)} style={[styles.miniCallBtn, {borderColor:'#F97316'}]}>
+                  <Ionicons name="call-outline" size={16} color={'#F97316'} />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        <View style={{ height: 40 }} />
+      </ScrollView>
+    )
+  }
+
+  if (!visible) return null
+
+  return (
+    <View style={[styles.fullScreenOverlay, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999 }]}>
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <Ionicons name="close" size={24} color={COLORS.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Chi Tiết Đơn Hàng</Text>
+          <View style={{ width: 32 }} />
+        </View>
+        {renderContent()}
+        
+        {/* BOTTOM BAR - Accept Button */}
+        {onAccept && data && (
+          <View style={styles.bottomBar}>
+            <TouchableOpacity 
+              style={[styles.acceptBtn, accepting && styles.acceptBtnDisabled]} 
+              onPress={handleAccept}
+              disabled={accepting}
+            >
+              {accepting ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Feather name="check-circle" size={20} color="#fff" />
+                  <Text style={styles.acceptBtnText}>Nhận Chuyến</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    </View>
+  )
+}
+
+const styles = StyleSheet.create({
+  fullScreenOverlay: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: COLORS.bg },
+  centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff',
+    borderBottomWidth: 1, borderColor: COLORS.border, paddingTop: 12 
+  },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text },
+  closeBtn: { padding: 4 },
+  body: { padding: 16, paddingBottom: 120 },
+  emptyText: { textAlign: 'center', color: COLORS.textLight },
+
+  // CARD
+  card: {
+    backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 16,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2
+  },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  postTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text, marginBottom: 4 },
+  postDate: { fontSize: 12, color: COLORS.textLight },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  statusText: { fontSize: 12, fontWeight: '700' },
+  divider: { height: 1, backgroundColor: COLORS.bg, marginVertical: 12 },
+  priceLabel: { fontSize: 12, color: COLORS.textLight },
+  priceValue: { fontSize: 20, fontWeight: '800', color: COLORS.primary },
+  descBox: { marginTop: 12, padding: 8, backgroundColor: '#F9FAFB', borderRadius: 8 },
+  desc: { fontSize: 14, color: COLORS.text, fontStyle: 'italic' },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.text, marginBottom: 12 },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 },
+
+  // ROUTE
+  routeContainer: { paddingLeft: 4 },
+  routeRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  routeContent: { flex: 1, marginLeft: 12 },
+  routeLabel: { fontSize: 12, color: COLORS.textLight, marginBottom: 2 },
+  routeAddress: { fontSize: 14, fontWeight: '500', color: COLORS.text, lineHeight: 20 },
+  routeLine: { marginLeft: 9, height: 20, borderLeftWidth: 2, borderColor: '#E5E7EB', marginVertical: 2 },
+
+  // AI & DRIVERS
+  aiContainer: { marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderColor: COLORS.border },
+  aiTitle: { fontSize: 14, fontWeight: '700', color: COLORS.purple, marginLeft: 6 },
+  aiRec: { fontSize: 13, color: COLORS.text, marginBottom: 12, fontStyle:'italic' },
+  
+  // Trip Info Box
+  tripInfoBox: { flexDirection: 'row', gap: 12, marginVertical: 12 },
+  tripInfoItem: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0F9FF', padding: 10, borderRadius: 8, gap: 4 },
+  tripInfoLabel: { fontSize: 12, color: COLORS.textLight, fontWeight: '500' },
+  tripInfoValue: { fontSize: 13, color: COLORS.text, fontWeight: '700' },
+  
+  // Recommendation Box
+  recommendBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFBEB', padding: 10, borderRadius: 8, marginBottom: 12, gap: 6 },
+  recommendLabel: { fontSize: 12, color: COLORS.textLight, fontWeight: '500' },
+  recommendValue: { fontSize: 13, color: COLORS.warning, fontWeight: '700' },
+  
+  // Quota Box
+  quotaBox: { backgroundColor: '#F3F4F6', padding: 10, borderRadius: 8, marginBottom: 12 },
+  quotaText: { fontSize: 12, color: COLORS.text },
+  quotaBold: { fontWeight: '700', color: COLORS.primary },
+  
+  scenarioGrid: { gap: 8 },
+  scenarioBox: { padding: 10, borderRadius: 8, borderWidth: 1 },
+  scenarioOk: { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
+  scenarioFail: { backgroundColor: '#FEF2F2', borderColor: '#FECACA', opacity: 0.7 },
+  scenarioLabel: { fontSize: 13, fontWeight: '700', color: COLORS.text },
+  scenarioMsg: { fontSize: 12, color: COLORS.textLight, marginTop: 4, lineHeight: 18 },
+  scenarioTime: { fontSize: 11, fontWeight: '600', color: COLORS.text, marginTop: 6, backgroundColor: '#fff', padding: 4, borderRadius: 4, alignSelf: 'flex-start' },
+
+  // DRIVER CARD STYLE
+  driverCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB' },
+  avatarContainer: { position: 'relative' },
+  avatarImg: { width: 48, height: 48, borderRadius: 24 },
+  statusDot: { width: 12, height: 12, borderRadius: 6, position: 'absolute', bottom: 0, right: 0, borderWidth: 2, borderColor: '#fff' },
+  driverName: { fontSize: 14, fontWeight: '700', color: COLORS.text },
+  driverStatusText: { fontSize: 12, fontWeight: '600' },
+  statsBadge: { flexDirection:'row', alignItems:'center', backgroundColor: '#E5E7EB', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
+  statsText: { fontSize: 11, color: COLORS.textLight },
+  callBtnCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.success, alignItems: 'center', justifyContent: 'center' },
+
+  // PACKAGES
+  packageItem: { backgroundColor: '#fff', borderBottomWidth:1, borderColor: COLORS.bg, paddingBottom: 16, marginBottom: 16 },
+  pkgHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  pkgTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text },
+  pkgCode: { fontSize: 12, color: COLORS.textLight },
+  specRow: { flexDirection: 'row', flexWrap:'wrap', gap: 8, marginBottom: 8 },
+  specText: { fontSize: 11, fontWeight: '600', color: COLORS.textLight, backgroundColor: '#F3F4F6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  itemMeta: { marginTop: 4 },
+  itemName: { fontSize: 13, fontWeight: '600', color: COLORS.text },
+  itemDesc: { fontSize: 12, color: COLORS.textLight },
+  itemVal: { fontSize: 12, color: COLORS.success, fontWeight: '500', marginTop: 2 },
+  galleryImg: { width: 80, height: 80, borderRadius: 8, marginRight: 8, backgroundColor: '#E5E7EB' },
+
+  // CONTACT
+  contactRow: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12 },
+  roleBox: { width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderColor: COLORS.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', marginRight: 12 },
+  roleText: { fontSize: 10, fontWeight: '800' },
+  contactName: { fontSize: 14, fontWeight: '700', color: COLORS.text },
+  contactPhone: { fontSize: 13, color: COLORS.textLight },
+  contactEmail: { fontSize: 12, color: COLORS.textLight, marginTop: 2 },
+  miniCallBtn: { padding: 8, borderWidth:1, borderColor: COLORS.primary, borderRadius: 20 },
+  
+  // Time Window
+  timeWindowText: { fontSize: 12, color: COLORS.primary, marginTop: 4, fontWeight: '600' },
+  
+  // Special Properties
+  specialPropsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  propBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1 },
+  propText: { fontSize: 11, fontWeight: '700' },
+  
+  // BOTTOM BAR
+  bottomBar: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  acceptBtn: {
+    backgroundColor: COLORS.success,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+  },
+  acceptBtnDisabled: {
+    backgroundColor: '#9CA3AF',
+  },
+  acceptBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  
+  // AI ANALYSIS STYLES
+  analyzeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F5F3FF',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+    gap: 6,
+  },
+  analyzeBtnText: {
+    color: COLORS.purple,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  aiHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 8,
+  },
+  aiHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.purple,
+  },
+  scoreContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    padding: 16,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+  },
+  scoreCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: COLORS.primary,
+  },
+  scoreValue: {
+    fontSize: 28,
+    fontWeight: '800',
+  },
+  scoreMax: {
+    fontSize: 12,
+    color: COLORS.textLight,
+    marginTop: -4,
+  },
+  verdictBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  verdictText: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  shortSummary: {
+    fontSize: 13,
+    color: COLORS.text,
+    lineHeight: 18,
+  },
+  analysisSection: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderColor: COLORS.border,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 6,
+  },
+  sectionHeaderText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  financialGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 12,
+  },
+  financialItem: {
+    flex: 1,
+    minWidth: '45%',
+    backgroundColor: '#F9FAFB',
+    padding: 10,
+    borderRadius: 8,
+  },
+  financialLabel: {
+    fontSize: 11,
+    color: COLORS.textLight,
+    marginBottom: 4,
+  },
+  financialValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  detailsText: {
+    fontSize: 12,
+    color: COLORS.text,
+    fontStyle: 'italic',
+    backgroundColor: '#F9FAFB',
+    padding: 10,
+    borderRadius: 8,
+  },
+  operationalList: {
+    gap: 10,
+  },
+  operationalItem: {
+    backgroundColor: '#F9FAFB',
+    padding: 10,
+    borderRadius: 8,
+  },
+  operationalLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 4,
+  },
+  operationalValue: {
+    fontSize: 13,
+    color: COLORS.text,
+  },
+  actionItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+    paddingLeft: 8,
+  },
+  actionBullet: {
+    fontSize: 16,
+    color: COLORS.purple,
+    marginRight: 8,
+    fontWeight: '700',
+  },
+  actionText: {
+    flex: 1,
+    fontSize: 13,
+    color: COLORS.text,
+    lineHeight: 18,
+  },
+  riskWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 16,
+    gap: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.danger,
+  },
+  riskWarningText: {
+    flex: 1,
+    fontSize: 13,
+    color: COLORS.danger,
+    fontWeight: '600',
+  },
+  
+  // Vehicle Selection Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  vehicleModalContainer: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 20,
+  },
+  vehicleModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderColor: COLORS.border,
+  },
+  vehicleModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  vehicleList: {
+    padding: 16,
+    maxHeight: 400,
+  },
+  vehicleItem: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  vehicleItemSelected: {
+    backgroundColor: '#EFF6FF',
+    borderColor: COLORS.primary,
+  },
+  vehicleInfo: {
+    flex: 1,
+  },
+  vehicleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  vehiclePlate: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.text,
+  },
+  vehicleModel: {
+    fontSize: 14,
+    color: COLORS.text,
+    marginBottom: 8,
+    fontWeight: '600',
+  },
+  vehicleSpecs: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  vehicleSpec: {
+    fontSize: 12,
+    color: COLORS.textLight,
+    backgroundColor: '#fff',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    fontWeight: '600',
+  },
+  vehicleModalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  cancelBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  confirmBtn: {
+    flex: 1,
+    backgroundColor: COLORS.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  confirmBtnDisabled: {
+    backgroundColor: '#9CA3AF',
+  },
+  confirmBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+})
+
+export default OwnerPostDetailModal

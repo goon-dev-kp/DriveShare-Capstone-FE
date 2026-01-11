@@ -1,0 +1,11 @@
+framework module ICNFCCardReader {
+  umbrella header "ICNFCCardReader.h"
+  export *
+
+  module * { export * }
+}
+
+module ICNFCCardReader.Swift {
+  header "ICNFCCardReader-Swift.h"
+  requires objc
+}
