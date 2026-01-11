@@ -1,20 +1,25 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# 🚚 DriveShare - Logistics Connection Platform
 
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/drive/19kAm7AUu0RnsCoN95nxF3Q8EPuW0I4DQ
-
-## Run Locally
-
-**Prerequisites:**  Node.js
+> A cross-platform mobile application connecting Goods Providers, Fleet Owners, and Drivers in a unified logistics ecosystem.
 
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## 📱 Introduction
+
+**DriveShare** is a Capstone Project developed to solve the fragmentation in the cargo transportation industry. It acts as a bridge where:
+1.  **Providers**  find reliable transport for their goods.
+2.  **Owners**  optimize vehicle utilization and manage contracts.
+3.  **Drivers** receive clear routes and execute trips efficiently.
+
+Built with **React Native (Expo)**, the app focuses on real-time tracking, seamless status updates, and complex role-based navigation.
+
+## 🛠️ Tech Stack
+
+* **Core:** [React Native](https://reactnative.dev/) (via [Expo SDK](https://expo.dev/))
+* **Language:** TypeScript / JavaScript
+* **Navigation:** React Navigation (Stack, Bottom Tabs)
+* **State Management:** Redux Toolkit
+* **Maps & Tracking:** VietMap API
+* **Real-time:** SignalR 
+* **UI Library:** React Native Paper / Tamagui
+* **Storage:** AsyncStorage / SecureStore
+
